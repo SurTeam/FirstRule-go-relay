@@ -1,0 +1,9 @@
+FirstRule Relay
+Copyright (c) 2026 SurTeam
+
+This product includes software derived from alma-relay
+(https://github.com/yetone/alma-relay), Copyright (c) 2025-2026 yetone,
+licensed under the MIT License.
+
+The wire protocol, Cloudflare Durable Object tunnel design, and substantial
+portions of the Node/Workers implementations originate from that project.

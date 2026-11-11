@@ -1,0 +1,40 @@
+{
+    "name": "firstrule-relay",
+    "version": "0.1.0",
+    "description": "Self-hostable FirstRule reverse tunnel \u2014 Node/Docker or Cloudflare Workers",
+    "license": "MIT",
+    "type": "module",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/SurTeam/FirstRule-go-relay.git"
+    },
+    "bin": {
+        "firstrule-relay": "./index.mjs"
+    },
+    "main": "index.mjs",
+    "files": [
+        "index.mjs",
+        "shared.mjs",
+        "apns.mjs",
+        "fcm.mjs",
+        "cloudflare/worker.mjs",
+        "scripts/mint-token.mjs"
+    ],
+    "scripts": {
+        "start": "node index.mjs",
+        "test": "node --test test/apns.test.mjs test/fcm.test.mjs && node test/e2e.mjs",
+        "test:cloudflare": "node test/e2e.mjs --cloudflare",
+        "dev:cloudflare": "wrangler dev",
+        "deploy:cloudflare": "wrangler deploy",
+        "mint-token": "node scripts/mint-token.mjs"
+    },
+    "engines": {
+        "node": ">=20"
+    },
+    "dependencies": {
+        "ws": "^8.18.3"
+    },
+    "devDependencies": {
+        "wrangler": "^4.20.0"
+    }
+}
