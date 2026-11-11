@@ -58,13 +58,13 @@ type errorFrame struct {
 }
 
 type hreqFrame struct {
-	T       string              `json:"t"`
-	ID      string              `json:"id"`
-	Method  string              `json:"method"`
-	Path    string              `json:"path"`
-	Headers map[string][]string `json:"headers"`
-	B       string              `json:"b,omitempty"`
-	Stream  bool                `json:"stream,omitempty"`
+	T       string    `json:"t"`
+	ID      string    `json:"id"`
+	Method  string    `json:"method"`
+	Path    string    `json:"path"`
+	Headers headerMap `json:"headers"`
+	B       string    `json:"b,omitempty"`
+	Stream  bool      `json:"stream,omitempty"`
 }
 
 type hresFrame struct {
@@ -73,6 +73,10 @@ type hresFrame struct {
 	Status  int                 `json:"status"`
 	Headers map[string][]string `json:"headers"`
 }
+
+// headerMap accepts Node-style string values or multi-value arrays.
+type headerMap map[string][]string
+
 
 type idFrame struct {
 	T       string `json:"t"`

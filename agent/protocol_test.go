@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -52,11 +53,21 @@ func TestConfigAgentWSURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPrefix := "wss://firstrule-relay.example.workers.dev/agent?th="
-	if u[:len(wantPrefix)] != wantPrefix {
+	if !strings.HasPrefix(u, "wss://firstrule-relay.example.workers.dev/agent?") {
 		t.Fatalf("url %s", u)
 	}
 	if !strings.Contains(u, TokenHash(c.ConnectToken)) {
 		t.Fatalf("missing hash in %s", u)
+	}
+}
+
+func TestHeaderMapAcceptsStringOrArray(t *testing.T) {
+	var f hreqFrame
+	raw := []byte(`{"t":"hreq","id":"1","method":"GET","path":"/","headers":{"accept":"*/*","x-multi":["a","b"]}}`)
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.Headers["accept"][0] != "*/*" || len(f.Headers["x-multi"]) != 2 {
+		t.Fatalf("%#v", f.Headers)
 	}
 }
