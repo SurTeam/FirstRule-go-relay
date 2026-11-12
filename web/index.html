@@ -416,19 +416,21 @@ body.drawer-open { overflow: hidden; }
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = {
+const state = {
     token: "",
     base: "",
     es: null,
     session: null,
     agents: [],
+    primaryId: "",
     connected: false,
     streaming: null,
-historyLoadedFor: null,
+    historyLoadedFor: null,
     slashCursor: 0,
     slashMatches: [],
     stream: { asst: null, think: null, tools: {} },
     busy: false,
+    pendingUserText: "",
   };
 
   const SLASH_COMMANDS = [
@@ -537,9 +539,15 @@ function appendMsg(kind, text, meta) {
 
   function handleAgentEvent(type, data) {
     switch (type) {
-      case "user_message": {
+case "user_message": {
         finishAssistantStreams();
-        appendMsg("user", data.text || "", "user");
+        const text = data.text || "";
+        // Dedupe optimistic local echo from send().
+        if (state.pendingUserText && text === state.pendingUserText) {
+          state.pendingUserText = "";
+          break;
+        }
+        appendMsg("user", text, "user");
         break;
       }
       case "reasoning_delta": {
@@ -731,23 +739,36 @@ function openEvents() {
     es.onerror = () => setStatus(false, "sse error / reconnecting");
   }
 
+function normalizeAgents(list, primaryId) {
+    const pid = primaryId || "";
+    return (list || []).map((a) => {
+      const id = a && (a.id || a.ID) || "";
+      return Object.assign({}, a, {
+        id,
+        state: a.state || a.status || "",
+        selected: Boolean(id && pid && id === pid),
+      });
+    });
+  }
+
   function renderSessions() {
     const box = $("sessions");
     box.innerHTML = "";
     if (!state.agents.length) {
-      box.innerHTML = "<div class=\"dim\">no agents</div>";
+      box.innerHTML = "<div class=\"dim\">no agents — start or resume one on the desktop daemon</div>";
       return;
     }
-for (const a of state.agents) {
+    for (const a of state.agents) {
+      const selected = Boolean(a.selected || (a.id && a.id === state.primaryId));
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "item" + (a.selected ? " active" : "");
+      btn.className = "item" + (selected ? " active" : "");
       const idEl = document.createElement("div");
       idEl.className = "id";
       idEl.textContent = a.id;
       const subEl = document.createElement("div");
       subEl.className = "sub";
-      subEl.textContent = (a.state || "") + (a.model ? " · " + a.model : "") + (a.selected ? " · selected" : "");
+      subEl.textContent = (a.state || "") + (a.model ? " · " + a.model : "") + (selected ? " · selected" : "");
       btn.appendChild(idEl);
       btn.appendChild(subEl);
       btn.onclick = () => selectAgent(a.id);
@@ -757,13 +778,38 @@ for (const a of state.agents) {
 
   async function refreshAgents() {
     const data = await api("/v1/agents");
-    state.agents = data.agents || [];
+    state.primaryId = (data && data.primaryId) || "";
+    state.agents = normalizeAgents(data && data.agents, state.primaryId);
     renderSessions();
+    return data;
+  }
+
+async function ensurePrimarySelected() {
+    if (!state.agents.length) return false;
+    const want = state.primaryId || state.agents[0].id;
+    if (!want) return false;
+    // Always POST select so an unbound Bridge gets BindPrimary before session/send.
+    const data = await api("/v1/agents/" + encodeURIComponent(want) + "/select", {
+      method: "POST",
+      body: "{}",
+    });
+    state.primaryId = (data && data.primaryId) || want;
+    state.agents = normalizeAgents(state.agents, state.primaryId);
+    renderSessions();
+    return true;
   }
 
   async function refreshSession() {
-    const s = await api("/v1/session");
-    state.session = s && s.id ? s : null;
+    try {
+      const s = await api("/v1/session");
+      state.session = s && s.id ? s : null;
+    } catch (err) {
+      if (err && err.status === 503) {
+        state.session = null;
+      } else {
+        throw err;
+      }
+    }
     updateSessionLabel();
     if (state.session && state.session.id) await loadHistory(state.session.id);
   }
@@ -871,15 +917,22 @@ function normalizeRelayOrigin(raw) {
     try {
       const hz = await fetch(state.base + "/healthz");
       if (!hz.ok) throw new Error("healthz " + hz.status);
-      setConnected(true);
+setConnected(true);
       clearTranscript();
       appendMsg("system", "Connected via " + origin + " (token hidden)", "system");
-      await refreshAgents();
+await refreshAgents();
+      const bound = await ensurePrimarySelected();
+      if (!bound) {
+        appendMsg("system", "No running agents on the desktop. Start or resume a session in the daemon, then refresh.", "system");
+        $("hint").textContent = "Connected, but no primary agent yet.";
+      }
       await refreshSession();
       await refreshPermissions();
-      openEvents();
+      // Subscribe only after BindPrimary: /v1/events snapshots the hub at open time.
+      if (bound) openEvents();
+      else setStatus(false, "waiting for primary");
       $("composer").focus();
-      $("hint").textContent = "Connected. Type / for commands.";
+      if (bound) $("hint").textContent = "Connected. Type / for commands.";
     } catch (err) {
       setConnected(false);
       setStatus(false, "offline");
@@ -895,8 +948,10 @@ function normalizeRelayOrigin(raw) {
     setConnected(false);
     setStatus(null, "offline");
     state.base = "";
-    state.session = null;
+state.session = null;
     state.agents = [];
+    state.primaryId = "";
+    state.pendingUserText = "";
     state.historyLoadedFor = null;
     updateSessionLabel();
     $("sessions").innerHTML = "<div class=\"dim\">connect to load</div>";
@@ -905,18 +960,20 @@ function normalizeRelayOrigin(raw) {
     $("hint").textContent = "Disconnected";
   }
 
-  async function selectAgent(id) {
+async function selectAgent(id) {
     try {
       closeEvents();
       state.historyLoadedFor = null;
-      await api("/v1/agents/" + encodeURIComponent(id) + "/select", {
+      const data = await api("/v1/agents/" + encodeURIComponent(id) + "/select", {
         method: "POST",
         body: "{}",
       });
+      state.primaryId = (data && data.primaryId) || id;
       clearTranscript();
       await refreshAgents();
       await refreshSession();
       await refreshPermissions();
+      // Reopen SSE on the newly bound primary Hub (subscribers do not migrate on Bind).
       openEvents();
       closeSessionsDrawer();
     } catch (err) {
@@ -924,21 +981,19 @@ function normalizeRelayOrigin(raw) {
     }
   }
 
-  async function createSession() {
+async function createSession() {
+    // Remote Bridge exposes GET /v1/session only; creating slots is a desktop/host action.
+    appendMsg(
+      "system",
+      "New session must be started on the desktop daemon (firstrule). After it is running, refresh agents or reconnect; this page will auto-select the primary.",
+      "system",
+    );
     try {
-      closeEvents();
-      state.historyLoadedFor = null;
-      const s = await api("/v1/session", {
-        method: "POST",
-        body: JSON.stringify({ action: "create" }),
-      });
-      state.session = s;
-      updateSessionLabel();
-      clearTranscript();
-      appendMsg("system", "Created session " + (s.id || ""), "system");
       await refreshAgents();
-      openEvents();
-      closeSessionsDrawer();
+const bound = await ensurePrimarySelected();
+      if (bound) openEvents();
+      await refreshSession();
+      if (!bound) $("hint").textContent = "No running agents yet — start one on the desktop.";
     } catch (err) {
       appendMsg("system", String(err.message || err), "system");
     }
@@ -970,16 +1025,23 @@ async function send() {
     }
     state.busy = true;
     $("btnSend").disabled = true;
-    // Do not locally echo: user_message arrives on the shared Hub SSE.
     $("composer").value = "";
     closeSlashMenu();
-    try {
+    // Optimistic user card so the transcript updates even if SSE is briefly
+    // subscribed to a pre-bind hub; SSE user_message dedupes via pendingUserText.
+    state.pendingUserText = text;
+    appendMsg("user", text, "user");
+try {
       await api("/v1/messages", {
         method: "POST",
         body: JSON.stringify({ text }),
       });
+      // Do not reopen SSE here: BindPrimary subscribers are fixed at subscribe
+      // time, but tearing down EventSource mid-turn can drop early text_delta.
+      // Rebind paths (connect/select/refresh) already call openEvents after select.
       await refreshSession().catch(() => {});
     } catch (err) {
+      state.pendingUserText = "";
       appendMsg("system", String(err.message || err), "send error");
     } finally {
       state.busy = false;
@@ -1181,11 +1243,25 @@ const parts = [
   $("btnSend").onclick = send;
   $("btnNew").onclick = createSession;
   $("btnStop").onclick = stopSession;
-  $("btnRefresh").onclick = () => {
-    Promise.all([refreshAgents(), refreshSession(), refreshPermissions()])
+$("btnRefresh").onclick = () => {
+    refreshAgents()
+      .then(() => ensurePrimarySelected())
+      .then((bound) => {
+        // Bound-only: do not require state.connected (AC3 hole after unbound connect).
+        if (bound) openEvents();
+        return Promise.all([refreshSession(), refreshPermissions()]);
+      })
       .catch((e) => appendMsg("system", String(e.message || e), "system"));
   };
-  $("btnRefreshAgents").onclick = () => refreshAgents().catch((e) => appendMsg("system", String(e.message || e), "system"));
+  $("btnRefreshAgents").onclick = () => {
+    refreshAgents()
+      .then(() => ensurePrimarySelected())
+      .then((bound) => {
+        if (bound) openEvents();
+        return refreshSession();
+      })
+      .catch((e) => appendMsg("system", String(e.message || e), "system"));
+  };
   $("btnRefreshPerms").onclick = () => refreshPermissions().catch((e) => appendMsg("system", String(e.message || e), "permissions"));
   $("btnSessions").onclick = toggleSessionsDrawer;
   $("btnCloseSessions").onclick = closeSessionsDrawer;

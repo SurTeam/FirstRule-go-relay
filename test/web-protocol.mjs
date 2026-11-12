@@ -19,8 +19,9 @@ const check = (name, ok, detail = '') => {
   if (!ok) failures++;
 };
 
-const posted = { messages: [], permissions: [] };
+const posted = { messages: [], permissions: [], selects: [] };
 const sseClients = new Set();
+let primaryId = ''; // unbound until web POSTs /select (mirrors desktop Bridge)
 
 function broadcast(type, data) {
   const payload = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -50,19 +51,30 @@ const server = createServer((req, res) => {
     });
     return res.end();
   }
-  if (pathname === '/healthz') return sendJSON(200, { ok: true });
+  if (pathname === '/healthz') return sendJSON(200, { ok: true, bound: Boolean(primaryId) });
   if (pathname === '/v1/agents' && req.method === 'GET') {
-    return sendJSON(200, { agents: [{ id: 'sess-1', state: 'idle', model: 'demo', selected: true }], primaryId: 'sess-1' });
+    return sendJSON(200, {
+      agents: [{ id: 'sess-1', status: 'idle', model: 'demo' }],
+      primaryId,
+    });
+  }
+  if (pathname.startsWith('/v1/agents/') && pathname.endsWith('/select') && req.method === 'POST') {
+    const id = decodeURIComponent(pathname.slice('/v1/agents/'.length, -'/select'.length).replace(/\/$/, ''));
+    posted.selects.push(id);
+    primaryId = id;
+    return sendJSON(200, { ok: true, primaryId });
   }
   if (pathname === '/v1/session' && req.method === 'GET') {
-    return sendJSON(200, { id: 'sess-1', state: 'idle', model: 'demo' });
+    if (!primaryId) return sendJSON(503, { error: 'no primary agent' });
+    return sendJSON(200, { id: primaryId, status: 'idle', model: 'demo' });
   }
   if (pathname === '/v1/session' && req.method === 'POST') {
-    return sendJSON(200, { id: 'sess-2', state: 'idle', model: 'demo' });
+    return sendJSON(405, { error: 'method not allowed' });
   }
-  if (pathname === '/v1/history' && req.method === 'GET') {
+if (pathname === '/v1/history' && req.method === 'GET') {
+    if (!primaryId) return sendJSON(503, { error: 'no primary agent' });
     return sendJSON(200, {
-      id: 'sess-1',
+      id: primaryId,
       messages: [
         { role: 'user', text: 'hello history' },
         { role: 'assistant', text: 'hi from history' },
@@ -306,19 +318,41 @@ const transcriptText = () => $('transcript').children.map((c) => {
 }).join('\n');
 
 check('connect succeeds', $('hint').textContent.includes('Connected') || $('statusText').textContent === 'live', $('hint').textContent + ' / ' + $('statusText').textContent);
+check('auto-select primary before session', posted.selects[0] === 'sess-1' && primaryId === 'sess-1', JSON.stringify(posted.selects) + ' primary=' + primaryId);
+{
+  const active = $('sessions').children.find((c) => String(c.className || '').includes('active'));
+  const idText = active && active.children.find((c) => c.className === 'id');
+  check('selected marker from primaryId', Boolean(active && idText && idText.textContent === 'sess-1'), 'active=' + (active && active.className));
+}
 check('history restored user+assistant', /user\|.*hello history/.test(transcriptText()) && /assistant\|.*hi from history/.test(transcriptText()), transcriptText());
 check('history restored tool card', /tool\|/.test(transcriptText()) && transcriptText().includes('ok'), transcriptText());
 
 const ping = 'ping-e2e';
 $('composer').value = ping;
-await $('btnSend').onclick();
+const sendPromise = $('btnSend').onclick();
+await sleep(30);
+check('optimistic user card before/without waiting for SSE', transcriptText().includes('user|user|' + ping), transcriptText());
+await sendPromise;
 await sleep(250);
 check('POST /v1/messages body', posted.messages.length === 1 && posted.messages[0].text === ping);
-check('SSE user_message received', transcriptText().includes('user|user|' + ping), transcriptText());
+const userCards = transcriptText().split('\n').filter((l) => l.includes('user|user|' + ping));
+check('user card not duplicated after SSE user_message', userCards.length === 1, transcriptText());
 check(
   'SSE text_delta streamed',
   transcriptText().includes('pong:' + ping) || /agent\|.*pong:/.test(transcriptText()) || /assistant\|.*pong:/.test(transcriptText()),
   transcriptText(),
+);
+check(
+  'connect/select reopen SSE after bind',
+  /ensurePrimarySelected\(\)[\s\S]{0,400}if \(bound\) openEvents\(\)/.test(script)
+    && /selectAgent[\s\S]{0,800}openEvents\(\)/.test(script)
+    && script.includes('Subscribe only after BindPrimary'),
+);
+check(
+  'refresh/create reopen after bind without connected gate',
+  /createSession[\s\S]{0,500}if \(bound\) openEvents\(\)/.test(script)
+    && /btnRefresh[\s\S]{0,500}if \(bound\) openEvents\(\)/.test(script)
+    && !/if \(bound && state\.connected\) openEvents\(\)/.test(script),
 );
 
 $('composer').value = '/help';
