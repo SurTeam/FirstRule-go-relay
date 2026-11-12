@@ -107,10 +107,12 @@ header {
   display: flex;
   gap: 8px;
   align-items: center;
-  flex: 1 1 220px;
+  flex: 1 1 280px;
   min-width: 0;
+  flex-wrap: wrap;
 }
-.token-row input { flex: 1; min-width: 0; }
+.token-row input { flex: 1 1 140px; min-width: 0; }
+#relayURL { flex: 1.4 1 180px; }
 #main {
   display: grid;
   grid-template-columns: 1fr;
@@ -198,9 +200,18 @@ aside h2, .meta h2 {
   letter-spacing: .04em;
 }
 .msg.user { border-color: #335; }
-.msg.assistant { border-color: #245; }
+.msg.assistant, .msg.agent { border-color: #245; }
 .msg.system { border-color: #443; color: #d7c79a; }
 .msg.tool { border-color: #345; font-family: var(--mono); font-size: 12px; }
+.msg.think, .msg.thinking { border-color: #364; color: #9fd6b5; font-style: italic; }
+.msg .meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.msg .body { white-space: pre-wrap; word-break: break-word; }
 .composer-wrap {
   position: relative;
   border-top: 1px solid var(--border);
@@ -355,8 +366,9 @@ body.drawer-open { overflow: hidden; }
       <h1>FirstRule Relay</h1>
       <span class="pill"><span id="statusDot" class="dot"></span><span id="statusText">offline</span></span>
     </div>
-    <div class="token-row">
-      <input id="token" type="password" placeholder="Connect token (c/… path token)" autocomplete="off" spellcheck="false" />
+<div class="token-row">
+      <input id="relayURL" type="url" inputmode="url" placeholder="Relay server (https://relay.example)" autocomplete="url" spellcheck="false" />
+      <input id="token" type="password" placeholder="Connect token" autocomplete="off" spellcheck="false" />
       <button type="button" id="btnConnect" class="primary">Connect</button>
       <button type="button" id="btnDisconnect" class="ghost" disabled>Disconnect</button>
     </div>
@@ -412,9 +424,11 @@ body.drawer-open { overflow: hidden; }
     agents: [],
     connected: false,
     streaming: null,
-    historyLoadedFor: null,
+historyLoadedFor: null,
     slashCursor: 0,
     slashMatches: [],
+    stream: { asst: null, think: null, tools: {} },
+    busy: false,
   };
 
   const SLASH_COMMANDS = [
@@ -432,10 +446,11 @@ body.drawer-open { overflow: hidden; }
     $("statusText").textContent = text;
   }
 
-  function setConnected(on) {
+function setConnected(on) {
     state.connected = on;
     $("btnConnect").disabled = on;
     $("btnDisconnect").disabled = !on;
+    $("relayURL").disabled = on;
     $("token").disabled = on;
     $("composer").disabled = !on;
     $("btnSend").disabled = !on;
@@ -443,30 +458,170 @@ body.drawer-open { overflow: hidden; }
     $("btnStop").disabled = !on || !state.session || state.session.state === "stopped";
   }
 
-  function appendMsg(role, text, cls) {
+function appendMsg(kind, text, meta) {
     const el = document.createElement("div");
-    el.className = "msg " + (cls || role);
-    el.innerHTML = "<div class=\"role\"></div><div class=\"body\"></div>";
-    el.querySelector(".role").textContent = role;
-    el.querySelector(".body").textContent = text;
+    el.className = "msg " + (kind || "system");
+    if (meta) {
+      const m = document.createElement("div");
+      m.className = "meta";
+      m.textContent = meta;
+      el.appendChild(m);
+    }
+    const body = document.createElement("div");
+    body.className = "body";
+    body.textContent = text || "";
+    el.appendChild(body);
     $("transcript").appendChild(el);
     $("transcript").scrollTop = $("transcript").scrollHeight;
     return el;
   }
 
+  function resetStreamCards() {
+    state.stream = { asst: null, think: null, tools: {} };
+  }
+
   function clearTranscript() {
     $("transcript").innerHTML = "";
+    resetStreamCards();
     state.streaming = null;
   }
 
-  function ensureStream(id) {
-    if (state.streaming && state.streaming.id === id) return state.streaming.el.querySelector(".body");
-    const el = appendMsg("assistant", "", "assistant");
-    state.streaming = { id, el };
-    return el.querySelector(".body");
+  function ensureStreamCard(kind, meta, key) {
+    if (key === "asst" && state.stream.asst) return state.stream.asst;
+    if (key === "think" && state.stream.think) return state.stream.think;
+    if (key && key !== "asst" && key !== "think" && state.stream.tools[key]) {
+      return state.stream.tools[key];
+    }
+    const el = appendMsg(kind, "", meta);
+    if (key === "asst") state.stream.asst = el;
+    else if (key === "think") state.stream.think = el;
+    else if (key) state.stream.tools[key] = el;
+    return el;
   }
 
-  function finishStream() { state.streaming = null; }
+  function setCardBody(el, text) {
+    if (!el) return;
+    const body = el.querySelector(".body");
+    if (body) body.textContent = text || "";
+    $("transcript").scrollTop = $("transcript").scrollHeight;
+  }
+
+  function appendCardBody(el, text) {
+    if (!el || !text) return;
+    const body = el.querySelector(".body");
+    if (body) body.textContent = (body.textContent || "") + text;
+    $("transcript").scrollTop = $("transcript").scrollHeight;
+  }
+
+  function finishAssistantStreams() {
+    state.stream.asst = null;
+    state.stream.think = null;
+  }
+
+  function taskLabel(task) {
+    if (!task) return "tool";
+    const name = task.Name || task.name || "tool";
+    const status = task.Status || task.status || "";
+    return name + (status ? (" · " + status) : "");
+  }
+
+  function taskText(task) {
+    if (!task) return "";
+    const args = task.Arguments || task.arguments || "";
+    const out = task.Output || task.output || task.Detail || task.detail || "";
+    const parts = [];
+    if (args) parts.push(args);
+    if (out) parts.push(out);
+    return parts.join("\n");
+  }
+
+  function handleAgentEvent(type, data) {
+    switch (type) {
+      case "user_message": {
+        finishAssistantStreams();
+        appendMsg("user", data.text || "", "user");
+        break;
+      }
+      case "reasoning_delta": {
+        if (!(data.text || "")) break;
+        if (state.stream.asst) finishAssistantStreams();
+        const card = ensureStreamCard("think", "thinking", "think");
+        appendCardBody(card, data.text || "");
+        break;
+      }
+      case "reasoning_end": {
+        finishAssistantStreams();
+        break;
+      }
+      case "text_delta": {
+        if (state.stream.think) finishAssistantStreams();
+        const card = ensureStreamCard("agent", "assistant", "asst");
+        appendCardBody(card, data.text || "");
+        break;
+      }
+      case "system_notice": {
+        finishAssistantStreams();
+        const id = data.noticeId || "";
+        const existing = id && Array.from($("transcript").children).find((el) => el.dataset.noticeId === id);
+        if (existing) setCardBody(existing, data.text || "");
+        else {
+          const card = appendMsg("system", data.text || "", "system");
+          if (id) card.dataset.noticeId = id;
+        }
+        break;
+      }
+      case "permission_request": {
+        appendMsg("system", data.text || "permission requested", "permission");
+        refreshPermissions().catch(() => {});
+        break;
+      }
+      case "tool_preparing":
+      case "tool_start":
+      case "tool_done": {
+        finishAssistantStreams();
+        const task = data.task || {};
+        const id = task.ID || task.id || task.PreviewID || task.previewId || ("tool-" + Date.now());
+        const preview = task.PreviewID || task.previewId;
+        if (preview && preview !== id && state.stream.tools[preview]) {
+          state.stream.tools[id] = state.stream.tools[preview];
+          delete state.stream.tools[preview];
+        }
+        const card = ensureStreamCard("tool", taskLabel(task), id);
+        const meta = card.querySelector(".meta");
+        if (meta) meta.textContent = taskLabel(task);
+        setCardBody(card, taskText(task));
+        if (type === "tool_done") delete state.stream.tools[id];
+        break;
+      }
+      case "stream_done": {
+        finishAssistantStreams();
+        break;
+      }
+      case "turn_done": {
+        finishAssistantStreams();
+        const bits = [];
+        if (data.turn) bits.push(data.turn);
+        if (data.error) bits.push("error: " + data.error);
+        if (data.toolTotal) bits.push("tools " + (data.toolOk || 0) + "/" + data.toolTotal);
+        appendMsg("system", bits.join("\n") || "turn done", "turn_done");
+        refreshSession().catch(() => {});
+        break;
+      }
+      case "agent_error": {
+        finishAssistantStreams();
+        appendMsg("system", data.error || data.text || "agent error", "agent_error");
+        refreshSession().catch(() => {});
+        break;
+      }
+      case "ping":
+        break;
+      default: {
+        const text = data.text || data.turn || data.error || "";
+        if (text) appendMsg("system", text, type || "event");
+        break;
+      }
+    }
+  }
 
   async function api(path, opts = {}) {
     const headers = Object.assign({ "content-type": "application/json" }, opts.headers || {});
@@ -483,104 +638,47 @@ body.drawer-open { overflow: hidden; }
     return data;
   }
 
-  function renderHistory(events) {
+function renderHistory(hist) {
     clearTranscript();
-    for (const ev of events || []) {
-      const t = ev && ev.type;
-      const data = (ev && ev.data) || {};
-      switch (t) {
-        case "user":
-          appendMsg("user", data.text || "", "user");
-          break;
-        case "assistant":
-          appendMsg("assistant", data.text || "", "assistant");
-          break;
-        case "assistant_delta": {
-          const body = ensureStream(data.id || "hist");
-          body.textContent += data.delta || "";
-          break;
-        }
-        case "assistant_done":
-          finishStream();
-          break;
-        case "tool_start":
-          appendMsg("tool", "> " + (data.name || "tool") + (data.input ? " " + JSON.stringify(data.input) : ""), "tool");
-          break;
-        case "tool_result":
-          appendMsg("tool", String(data.output || data.error || ""), "tool");
-          break;
-        case "system":
-          appendMsg("system", data.text || "", "system");
-          break;
-        case "permission_request":
-          appendMsg("system", data.text || "permission requested", "permission");
-          break;
-        case "error":
-          appendMsg("system", data.message || "error", "system");
-          break;
-        default:
-          break;
+    const msgs = (hist && hist.messages) || [];
+    const tasks = (hist && hist.tasks) || [];
+    const byID = {};
+    for (const t of tasks) {
+      if (t && t.id) byID[t.id] = t;
+    }
+    for (const m of msgs) {
+      const role = (m && m.role) || "";
+      if (role === "user") {
+        appendMsg("user", m.text || "", "user");
+      } else if (role === "assistant") {
+        appendMsg("agent", m.text || "", "assistant");
+      } else if (role === "thinking") {
+        appendMsg("think", m.text || "", "thinking");
+      } else if (role === "system") {
+        const card = appendMsg("system", m.text || "", "system");
+        if (m.noticeId) card.dataset.noticeId = m.noticeId;
+      } else if (role === "tool_call") {
+        const task = byID[m.taskId] || { id: m.taskId, name: "tool", status: "" };
+        const card = appendMsg("tool", taskText(task), taskLabel(task));
+        if (task.id) state.stream.tools[task.id] = card;
       }
     }
-    finishStream();
   }
 
   async function loadHistory(sessionId) {
     if (!sessionId) return;
     if (state.historyLoadedFor === sessionId) return;
     try {
-      const data = await api("/v1/history?session_id=" + encodeURIComponent(sessionId) + "&limit=500");
-      renderHistory(data.events || []);
-      state.historyLoadedFor = sessionId;
-      if ((data.events || []).length) {
-        $("hint").textContent = "Restored " + data.events.length + " history event(s).";
+      const hist = await api("/v1/history");
+      if (hist && hist.id && hist.id !== sessionId) {
+        throw new Error("history session mismatch: wanted " + sessionId + " got " + hist.id);
       }
+      renderHistory(hist || { messages: [], tasks: [] });
+      state.historyLoadedFor = sessionId;
+      const n = ((hist && hist.messages) || []).length;
+      if (n) $("hint").textContent = "Restored " + n + " history message(s).";
     } catch (err) {
       appendMsg("system", "history: " + (err.message || err), "system");
-    }
-  }
-
-  function onEvent(ev) {
-    let data = {};
-    try { data = JSON.parse(ev.data || "{}"); } catch { data = { raw: ev.data }; }
-    switch (ev.type) {
-      case "user":
-        appendMsg("user", data.text || "", "user");
-        break;
-      case "assistant":
-        appendMsg("assistant", data.text || "", "assistant");
-        break;
-      case "assistant_delta": {
-        const body = ensureStream(data.id || "live");
-        body.textContent += data.delta || "";
-        $("transcript").scrollTop = $("transcript").scrollHeight;
-        break;
-      }
-      case "assistant_done":
-        finishStream();
-        break;
-      case "tool_start":
-        appendMsg("tool", "> " + (data.name || "tool") + (data.input ? " " + JSON.stringify(data.input) : ""), "tool");
-        break;
-      case "tool_result":
-        appendMsg("tool", String(data.output || data.error || ""), "tool");
-        break;
-      case "system":
-        appendMsg("system", data.text || "", "system");
-        break;
-      case "permission_request":
-        appendMsg("system", data.text || "permission requested", "permission");
-        refreshPermissions().catch(() => {});
-        break;
-      case "error":
-        appendMsg("system", data.message || "error", "system");
-        break;
-      case "session":
-        state.session = data;
-        updateSessionLabel();
-        break;
-      default:
-        appendMsg("system", ev.type + " " + JSON.stringify(data), "system");
     }
   }
 
@@ -599,19 +697,38 @@ body.drawer-open { overflow: hidden; }
     if (state.es) { state.es.close(); state.es = null; }
   }
 
-  function openEvents() {
+function openEvents() {
     closeEvents();
+    resetStreamCards();
     const url = state.base + "/v1/events";
     const es = new EventSource(url);
     state.es = es;
-    const types = [
-      "user", "assistant", "assistant_delta", "assistant_done",
-      "tool_start", "tool_result", "system", "error", "session",
-      "permission_request", "ping",
-    ];
-    for (const t of types) es.addEventListener(t, onEvent);
+    const on = (type) => (ev) => {
+      let data = {};
+      try { data = JSON.parse(ev.data || "{}"); } catch { data = { text: ev.data || "" }; }
+      handleAgentEvent(type, data || {});
+    };
+    [
+      "user_message",
+      "text_delta",
+      "reasoning_delta",
+      "reasoning_end",
+      "system_notice",
+      "tool_preparing",
+      "tool_start",
+      "tool_done",
+      "stream_done",
+      "turn_done",
+      "agent_error",
+      "permission_request",
+    ].forEach((t) => es.addEventListener(t, on(t)));
+    es.onmessage = (ev) => {
+      let data = {};
+      try { data = JSON.parse(ev.data || "{}"); } catch { data = { text: ev.data || "" }; }
+      handleAgentEvent((data && data.type) || "message", data || {});
+    };
     es.onopen = () => setStatus(true, "live");
-    es.onerror = () => setStatus(false, "sse error");
+    es.onerror = () => setStatus(false, "sse error / reconnecting");
   }
 
   function renderSessions() {
@@ -621,13 +738,18 @@ body.drawer-open { overflow: hidden; }
       box.innerHTML = "<div class=\"dim\">no agents</div>";
       return;
     }
-    for (const a of state.agents) {
+for (const a of state.agents) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "item" + (a.selected ? " active" : "");
-      btn.innerHTML = "<div class=\"id\"></div><div class=\"sub\"></div>";
-      btn.querySelector(".id").textContent = a.id;
-      btn.querySelector(".sub").textContent = (a.state || "") + (a.model ? " · " + a.model : "") + (a.selected ? " · selected" : "");
+      const idEl = document.createElement("div");
+      idEl.className = "id";
+      idEl.textContent = a.id;
+      const subEl = document.createElement("div");
+      subEl.className = "sub";
+      subEl.textContent = (a.state || "") + (a.model ? " · " + a.model : "") + (a.selected ? " · selected" : "");
+      btn.appendChild(idEl);
+      btn.appendChild(subEl);
       btn.onclick = () => selectAgent(a.id);
       box.appendChild(btn);
     }
@@ -646,7 +768,7 @@ body.drawer-open { overflow: hidden; }
     if (state.session && state.session.id) await loadHistory(state.session.id);
   }
 
-  async function refreshPermissions() {
+async function refreshPermissions() {
     const list = await api("/v1/permissions");
     const box = $("permissions");
     box.innerHTML = "";
@@ -660,17 +782,17 @@ body.drawer-open { overflow: hidden; }
       wrap.className = "item";
       const title = document.createElement("div");
       title.className = "id";
-      title.textContent = (p.tool || p.name || "permission") + (p.id != null ? " #" + p.id : "");
+      title.textContent = "#" + (p.id != null ? p.id : "?") + " " + (p.capability || p.tool || p.name || "permission");
       const sub = document.createElement("div");
       sub.className = "sub";
-      sub.textContent = p.summary || p.reason || JSON.stringify(p.args || p);
+      sub.textContent = p.reason || p.detail || p.summary || p.taskId || "";
       const row = document.createElement("div");
       row.className = "row";
       row.style.marginTop = "6px";
       const allow = document.createElement("button");
       allow.type = "button";
       allow.className = "primary";
-      allow.textContent = "Allow";
+      allow.textContent = "Approve";
       allow.onclick = () => decidePermission(p.id, true);
       const deny = document.createElement("button");
       deny.type = "button";
@@ -686,35 +808,63 @@ body.drawer-open { overflow: hidden; }
     }
   }
 
-  async function decidePermission(id, allow) {
+async function decidePermission(id, approve) {
     try {
       await api("/v1/permissions/" + id, {
         method: "POST",
-        body: JSON.stringify({ allow }),
+        body: JSON.stringify({ approve }),
       });
-      appendMsg("system", (allow ? "allowed" : "denied") + " permission #" + id, "permission");
+      appendMsg("system", (approve ? "approved" : "denied") + " permission #" + id, "permission");
       await refreshPermissions();
     } catch (err) {
       appendMsg("system", String(err.message || err), "permission");
     }
   }
 
-  function tunnelBase(token) {
-    const path = location.pathname.replace(/\/+$/, "");
-    const prefix = path.endsWith("/web") ? path.slice(0, -4) : path;
-    const root = location.origin + (prefix === "/" ? "" : prefix);
-    return root + "/c/" + encodeURIComponent(token);
+function normalizeRelayOrigin(raw) {
+    const value = String(raw || "").trim();
+    if (!value) return "";
+    try {
+      const u = new URL(value);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+      return u.origin;
+    } catch {
+      return "";
+    }
+  }
+
+  function defaultRelayOrigin() {
+    if (location.protocol === "http:" || location.protocol === "https:") {
+      const path = location.pathname.replace(/\/+$/, "");
+      const prefix = path.endsWith("/web") ? path.slice(0, -4) : path;
+      return location.origin + (prefix === "/" ? "" : prefix);
+    }
+    return "";
+  }
+
+  function tunnelBase(origin, token) {
+    return String(origin).replace(/\/+$/, "") + "/c/" + encodeURIComponent(token);
   }
 
   async function connect() {
+    const entered = $("relayURL").value.trim();
+    const origin = normalizeRelayOrigin(entered) || normalizeRelayOrigin(defaultRelayOrigin());
     const token = $("token").value.trim();
-    if (!token) {
-      $("hint").textContent = "Token required";
+    if (!origin || !token) {
+      $("hint").textContent = "Relay server URL and token are required";
       $("hint").className = "err grow";
       return;
     }
+    if (entered && !normalizeRelayOrigin(entered)) {
+      $("hint").textContent = "Relay server must be an http(s) URL";
+      $("hint").className = "err grow";
+      return;
+    }
+    $("relayURL").value = origin;
+    localStorage.setItem("firstrule.relayURL", origin);
+    localStorage.setItem("firstrule.relay.token", token);
     state.token = token;
-    state.base = tunnelBase(token);
+    state.base = tunnelBase(origin, token);
     state.historyLoadedFor = null;
     $("hint").className = "dim grow";
     $("hint").textContent = "Connecting…";
@@ -723,7 +873,7 @@ body.drawer-open { overflow: hidden; }
       if (!hz.ok) throw new Error("healthz " + hz.status);
       setConnected(true);
       clearTranscript();
-      appendMsg("system", "Connected via " + state.base, "system");
+      appendMsg("system", "Connected via " + origin + " (token hidden)", "system");
       await refreshAgents();
       await refreshSession();
       await refreshPermissions();
@@ -807,9 +957,9 @@ body.drawer-open { overflow: hidden; }
     }
   }
 
-  async function send() {
+async function send() {
     const text = $("composer").value.trim();
-    if (!text) return;
+    if (!text || state.busy) return;
     if (text.startsWith("/")) {
       const handled = await runSlashCommand(text);
       if (handled) {
@@ -818,6 +968,9 @@ body.drawer-open { overflow: hidden; }
         return;
       }
     }
+    state.busy = true;
+    $("btnSend").disabled = true;
+    // Do not locally echo: user_message arrives on the shared Hub SSE.
     $("composer").value = "";
     closeSlashMenu();
     try {
@@ -825,8 +978,12 @@ body.drawer-open { overflow: hidden; }
         method: "POST",
         body: JSON.stringify({ text }),
       });
+      await refreshSession().catch(() => {});
     } catch (err) {
-      appendMsg("system", String(err.message || err), "system");
+      appendMsg("system", String(err.message || err), "send error");
+    } finally {
+      state.busy = false;
+      $("btnSend").disabled = !state.connected;
     }
   }
 
@@ -896,16 +1053,21 @@ if (isNarrow()) {
       menu.innerHTML = "<div class=\"slash-empty\">No matching commands</div>";
       return;
     }
-    matches.forEach((c, i) => {
+matches.forEach((c, i) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "slash-item";
       btn.setAttribute("role", "option");
       btn.id = "slash-opt-" + i;
       btn.setAttribute("aria-selected", i === state.slashCursor ? "true" : "false");
-      btn.innerHTML = "<span class=\"cmd\"></span><span class=\"desc\"></span>";
-      btn.querySelector(".cmd").textContent = "/" + c.name;
-      btn.querySelector(".desc").textContent = c.description;
+      const cmd = document.createElement("span");
+      cmd.className = "cmd";
+      cmd.textContent = "/" + c.name;
+      const desc = document.createElement("span");
+      desc.className = "desc";
+      desc.textContent = c.description;
+      btn.appendChild(cmd);
+      btn.appendChild(desc);
       btn.onmousedown = (ev) => {
         // Prevent textarea blur before click applies.
         ev.preventDefault();
@@ -993,8 +1155,9 @@ if (isNarrow()) {
         return true;
       case "status": {
         const s = state.session;
-        const parts = [
+const parts = [
           "connection: " + (state.connected ? "live" : "offline"),
+          "relay: " + ($("relayURL").value.trim() || "(none)"),
           "base: " + (state.base || "(none)"),
           "session: " + (s && s.id ? s.id : "(none)"),
           "state: " + (s && s.state ? s.state : "n/a"),
@@ -1093,8 +1256,19 @@ if (isNarrow()) {
   if (typeof narrowMq.addEventListener === "function") narrowMq.addEventListener("change", onViewportChange);
   else if (typeof narrowMq.addListener === "function") narrowMq.addListener(onViewportChange);
 
-  const saved = localStorage.getItem("firstrule.relay.token");
-  if (saved) $("token").value = saved;
+const savedURL = localStorage.getItem("firstrule.relayURL") || "";
+  $("relayURL").value = savedURL || defaultRelayOrigin();
+  const savedToken = localStorage.getItem("firstrule.relay.token");
+  if (savedToken) $("token").value = savedToken;
+  $("relayURL").addEventListener("change", () => {
+    const origin = normalizeRelayOrigin($("relayURL").value);
+    if (origin) {
+      $("relayURL").value = origin;
+      localStorage.setItem("firstrule.relayURL", origin);
+    } else {
+      localStorage.setItem("firstrule.relayURL", $("relayURL").value.trim());
+    }
+  });
   $("token").addEventListener("change", () => {
     localStorage.setItem("firstrule.relay.token", $("token").value.trim());
   });
