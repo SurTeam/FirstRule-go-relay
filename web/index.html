@@ -464,6 +464,33 @@ function connectEvents() {
     es.onerror = () => setStatus("SSE disconnected / reconnecting…", false);
   }
 
+
+  function renderHistory(hist) {
+    const msgs = (hist && hist.messages) || [];
+    const tasks = (hist && hist.tasks) || [];
+    const byID = {};
+    for (const t of tasks) {
+      if (t && t.id) byID[t.id] = t;
+    }
+    for (const m of msgs) {
+      const role = (m && m.role) || "";
+      if (role === "user") {
+        appendMsg("user", m.text || "", "user");
+      } else if (role === "assistant") {
+        appendMsg("agent", m.text || "", "assistant");
+      } else if (role === "thinking") {
+        appendMsg("think", m.text || "", "thinking");
+      } else if (role === "system") {
+        const card = appendMsg("system", m.text || "", "system");
+        if (m.noticeId) card.dataset.noticeId = m.noticeId;
+      } else if (role === "tool_call") {
+        const task = byID[m.taskId] || { id: m.taskId, name: "tool", status: "" };
+        const card = appendMsg("tool", taskText(task), taskLabel(task));
+        if (task.id) state.stream.tools[task.id] = card;
+      }
+    }
+  }
+
 async function openSession(id) {
     try {
       setStatus("opening " + shortId(id) + "…");
@@ -485,6 +512,11 @@ $("sessionInfo").textContent = "";
         throw new Error("session switch mismatch: wanted " + id + " got " + ((s && s.id) || "?"));
       }
       await refreshPermissions();
+      const hist = await api("/v1/history");
+      if (hist && hist.id && hist.id !== id) {
+        throw new Error("history session mismatch: wanted " + id + " got " + hist.id);
+      }
+      renderHistory(hist || { messages: [], tasks: [] });
       connectEvents();
       appendMsg("system", "Opened session " + id, "session");
     } catch (err) {
