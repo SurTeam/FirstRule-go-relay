@@ -488,6 +488,39 @@ await $('btnSend').onclick();
 await sleep(40);
 check('slash /settings works', transcriptText().includes('parallel=') && posted.sessions.some((s) => s.action === 'settings'));
 
+$('composer').value = '/continue';
+await $('btnSend').onclick();
+await sleep(40);
+check('slash /continue works', posted.sessions.some((s) => s.action === 'continue') && transcriptText().includes('Continue requested'));
+
+$('composer').value = '/model';
+await $('btnSend').onclick();
+await sleep(40);
+check('slash /model lists', transcriptText().includes('Models:') && transcriptText().includes('demo'));
+
+$('composer').value = '/compact';
+await $('btnSend').onclick();
+await sleep(40);
+check('slash /compact works', posted.sessions.some((s) => s.action === 'compact'));
+
+$('composer').value = '/agents';
+await $('btnSend').onclick();
+await sleep(40);
+check('slash /agents works', transcriptText().includes('waiting_permission') || transcriptText().includes('child'));
+
+$('composer').value = '/approve 7';
+await $('btnSend').onclick();
+await sleep(40);
+check('slash /approve works', posted.permissions.some((p) => String(p.id) === '7' && p.body && p.body.approve === true));
+
+$('composer').value = '/revoke child shell';
+await $('btnSend').onclick();
+await sleep(40);
+check('slash /revoke works', posted.delegates.some((d) => d.action === 'revoke' && d.taskId === 'child' && d.capability === 'shell'));
+
+check('slash omits daemon/exit', !/name:\s*"daemon"/.test(script) && !/name:\s*"exit"/.test(script));
+check('slash prefix filter retained', /filterSlash[\s\S]{0,200}startsWith\(prefix\)/.test(script) && /updateSlashFromComposer[\s\S]{0,300}filterSlash\(prefix\)/.test(script));
+
 // Create dialog path completion + confirm
 await $('btnNew').onclick();
 await sleep(200);
