@@ -412,6 +412,31 @@ body.drawer-open { overflow: hidden; }
       <button type="button" id="btnRefreshPerms" class="ghost">Refresh permissions</button>
     </aside>
   </div>
+
+  <div id="createDialog" role="dialog" aria-modal="true" aria-labelledby="createTitle" hidden>
+    <div class="panel">
+      <h3 id="createTitle">New session</h3>
+      <label class="dim" for="createWorkspace">Workspace directory</label>
+      <div class="path-wrap">
+        <input id="createWorkspace" type="text" spellcheck="false" autocomplete="off" placeholder="~/Projects/my-app" />
+        <div id="pathMenu" role="listbox" aria-label="Directory completions"></div>
+      </div>
+      <label class="dim" for="createModel">Model (optional)</label>
+      <select id="createModel"><option value="">default</option></select>
+      <label class="dim" for="createMode">Principle mode</label>
+      <select id="createMode">
+        <option value="off">off</option>
+        <option value="auto">auto</option>
+        <option value="lite">lite</option>
+        <option value="full">full</option>
+      </select>
+      <div class="row">
+        <span class="dim grow" id="createHint">Paths are sandboxed under the desktop home directory.</span>
+        <button type="button" id="btnCreateCancel" class="ghost">Cancel</button>
+        <button type="button" id="btnCreateConfirm" class="primary">Create</button>
+      </div>
+    </div>
+  </div>
 </div>
 <script>
 (() => {
@@ -431,13 +456,27 @@ const state = {
     stream: { asst: null, think: null, tools: {} },
     busy: false,
     pendingUserText: "",
+    pathMatches: [],
+    pathCursor: 0,
   };
 
   const SLASH_COMMANDS = [
     { name: "help", description: "show available commands" },
-    { name: "new", description: "create a new session" },
+    { name: "new", description: "create a new session under a workspace" },
     { name: "resume", description: "open the session list" },
-    { name: "status", description: "show session and connection status" },
+    { name: "continue", description: "retry with the selected model" },
+    { name: "model", description: "switch model (optional id)" },
+    { name: "principle", description: "off | auto | lite | full" },
+    { name: "tasks", description: "recorded tool tasks" },
+    { name: "agents", description: "delegated task states" },
+    { name: "permissions", description: "pending permission requests" },
+    { name: "approve", description: "approve a permission request ID" },
+    { name: "deny", description: "deny a permission request ID" },
+    { name: "revoke", description: "revoke TASK CAPABILITY" },
+    { name: "settings", description: "show or set session settings" },
+    { name: "compact", description: "summarize older context now" },
+    { name: "status", description: "session and connection status" },
+    { name: "pwd", description: "workspace and session id" },
     { name: "stop", description: "stop the active session" },
   ];
 
@@ -755,7 +794,7 @@ function normalizeAgents(list, primaryId) {
     const box = $("sessions");
     box.innerHTML = "";
     if (!state.agents.length) {
-      box.innerHTML = "<div class=\"dim\">no agents — start or resume one on the desktop daemon</div>";
+      box.innerHTML = "<div class=\"dim\">no agents — use New or /new to create one</div>";
       return;
     }
     for (const a of state.agents) {
@@ -981,21 +1020,177 @@ async function selectAgent(id) {
     }
   }
 
-async function createSession() {
-    // Remote Bridge exposes GET /v1/session only; creating slots is a desktop/host action.
-    appendMsg(
-      "system",
-      "New session must be started on the desktop daemon (firstrule). After it is running, refresh agents or reconnect; this page will auto-select the primary.",
-      "system",
-    );
+async function listDirectories(path, prefix) {
+    const q = new URLSearchParams();
+    if (path) q.set("path", path);
+    if (prefix) q.set("prefix", prefix);
+    return api("/v1/fs?" + q.toString());
+  }
+
+  async function loadCreateModels() {
+    const sel = $("createModel");
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">default</option>';
     try {
+      const data = await api("/v1/models");
+      for (const m of (data && data.models) || []) {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = (m.name ? m.name + " · " : "") + m.id;
+        sel.appendChild(opt);
+      }
+    } catch (err) {
+      $("createHint").textContent = "models: " + (err.message || err);
+    }
+    if (cur) sel.value = cur;
+  }
+
+  function closePathMenu() {
+    const menu = $("pathMenu");
+    menu.classList.remove("open");
+    menu.className = (menu.className || "").replace(/\bopen\b/g, "").trim();
+    menu.innerHTML = "";
+    state.pathMatches = [];
+    state.pathCursor = 0;
+  }
+
+  function openPathMenu(items) {
+    const menu = $("pathMenu");
+    menu.innerHTML = "";
+    state.pathMatches = items || [];
+    state.pathCursor = 0;
+    if (!state.pathMatches.length) {
+      closePathMenu();
+      return;
+    }
+    state.pathMatches.forEach((item, i) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "item";
+      btn.setAttribute("role", "option");
+      btn.setAttribute("aria-selected", i === 0 ? "true" : "false");
+      btn.textContent = item.name + "/";
+      btn.onmousedown = (ev) => {
+        ev.preventDefault();
+        applyPathCompletion(item.path);
+      };
+      menu.appendChild(btn);
+    });
+    menu.classList.add("open");
+    menu.className = (menu.className || "").replace(/\bopen\b/g, "").trim() + " open";
+  }
+
+  function applyPathCompletion(path) {
+    $("createWorkspace").value = path.endsWith("/") ? path : path + "/";
+    closePathMenu();
+    updatePathCompletions();
+    $("createWorkspace").focus();
+  }
+
+  async function updatePathCompletions() {
+    if (!state.base) return;
+    const raw = $("createWorkspace").value || "";
+    let dir = raw;
+    let prefix = "";
+    if (!raw.endsWith("/") && raw !== "" && raw !== "~") {
+      const idx = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("~"));
+      if (raw.includes("/")) {
+        const slash = raw.lastIndexOf("/");
+        dir = raw.slice(0, slash + 1) || "/";
+        prefix = raw.slice(slash + 1);
+      } else if (raw.startsWith("~")) {
+        dir = "~";
+        prefix = raw.slice(1);
+      } else {
+        dir = "";
+        prefix = raw;
+      }
+    }
+    try {
+      const data = await listDirectories(dir || "~", prefix);
+      if (($("createWorkspace").value || "") !== raw) return;
+      openPathMenu((data && data.directories) || []);
+      if (data && data.path && !raw) $("createWorkspace").value = data.path;
+      $("createHint").textContent = "Listing " + ((data && data.path) || dir || "~");
+    } catch (err) {
+      closePathMenu();
+      $("createHint").textContent = String(err.message || err);
+    }
+  }
+
+  function openCreateDialog() {
+    if (!state.connected) {
+      appendMsg("system", "Connect before creating a session.", "system");
+      return;
+    }
+    document.body.classList.add("create-open");
+    $("createDialog").hidden = false;
+    $("createHint").textContent = "Paths are sandboxed under the desktop home directory.";
+    loadCreateModels().catch(() => {});
+    listDirectories((($("createWorkspace").value || "~").trim()) || "~").then((data) => {
+      if (data && data.home && !$("createWorkspace").value) {
+        $("createWorkspace").value = data.home + "/";
+      }
+      $("createHint").textContent = "Listing " + ((data && data.path) || "~");
+      return updatePathCompletions();
+    }).catch((err) => { $("createHint").textContent = String(err.message || err); });
+    setTimeout(() => $("createWorkspace").focus(), 0);
+  }
+
+  function closeCreateDialog() {
+    document.body.classList.remove("create-open");
+    $("createDialog").hidden = true;
+    closePathMenu();
+  }
+
+  async function createSession() {
+    openCreateDialog();
+  }
+
+  async function confirmCreateSession() {
+    const workspace = ($("createWorkspace").value || "").trim();
+    if (!workspace) {
+      $("createHint").textContent = "workspace is required";
+      return;
+    }
+    const model = ($("createModel").value || "").trim();
+    const mode = ($("createMode").value || "off").trim() || "off";
+    $("btnCreateConfirm").disabled = true;
+    try {
+      const body = { workspace, mode };
+      if (model) body.model = model;
+      const created = await api("/v1/agents", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      closeCreateDialog();
+      appendMsg("system", "Created session " + ((created && created.id) || "") + " in " + workspace, "system");
+      closeEvents();
+      state.historyLoadedFor = null;
+      clearTranscript();
+      const newId = created && created.id;
+      if (newId) state.primaryId = newId;
       await refreshAgents();
-const bound = await ensurePrimarySelected();
+      if (newId) {
+        state.primaryId = newId;
+        await api("/v1/agents/" + encodeURIComponent(newId) + "/select", {
+          method: "POST",
+          body: "{}",
+        });
+        state.primaryId = newId;
+        state.agents = normalizeAgents(state.agents, newId);
+        renderSessions();
+      }
+      const bound = newId ? true : await ensurePrimarySelected();
       if (bound) openEvents();
       await refreshSession();
-      if (!bound) $("hint").textContent = "No running agents yet — start one on the desktop.";
+      await refreshPermissions();
+      $("hint").textContent = "Session created.";
     } catch (err) {
+      $("createHint").textContent = String(err.message || err);
       appendMsg("system", String(err.message || err), "system");
+    } finally {
+      $("btnCreateConfirm").disabled = !state.connected;
     }
   }
 
@@ -1197,6 +1392,7 @@ matches.forEach((c, i) => {
     const m = /^\/([\w-]+)(?:\s+([\s\S]*))?$/.exec(trimmed);
     if (!m) return false;
     const cmd = m[1].toLowerCase();
+    const arg = (m[2] || "").trim();
     const known = SLASH_COMMANDS.some((c) => c.name === cmd);
     if (!known) return false;
 
@@ -1215,18 +1411,167 @@ matches.forEach((c, i) => {
         await refreshAgents().catch(() => {});
         appendMsg("system", "Select a session from the list.", "system");
         return true;
+      case "continue":
+        try {
+          await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "continue" }) });
+          appendMsg("system", "Continue requested.", "system");
+        } catch (err) {
+          appendMsg("system", String(err.message || err), "system");
+        }
+        return true;
+      case "model": {
+        try {
+          if (!arg) {
+            const data = await api("/v1/models");
+            const lines = ((data && data.models) || []).map((x) => "  " + x.id + (x.name ? "  " + x.name : ""));
+            const cur = state.session && state.session.model ? state.session.model : "(none)";
+            appendMsg("system", "Current model: " + cur + "\nModels:\n" + (lines.join("\n") || "  (none)"), "system");
+          } else {
+            const parts = arg.split(/\s+/);
+            const payload = { action: "model", model: parts[0] };
+            if (parts[1]) payload.thinking = parts[1];
+            await api("/v1/session", { method: "POST", body: JSON.stringify(payload) });
+            await refreshSession();
+            appendMsg("system", "Model switched to " + parts[0], "system");
+          }
+        } catch (err) {
+          appendMsg("system", String(err.message || err), "system");
+        }
+        return true;
+      }
+      case "principle": {
+        try {
+          if (!arg) {
+            const cur = state.session && state.session.mode ? state.session.mode : "(none)";
+            appendMsg("system", "Current mode: " + cur + "\nUse /principle off|auto|lite|full", "system");
+          } else {
+            await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "principle", mode: arg }) });
+            await refreshSession();
+            appendMsg("system", "Principle mode set to " + arg, "system");
+          }
+        } catch (err) {
+          appendMsg("system", String(err.message || err), "system");
+        }
+        return true;
+      }
+      case "tasks": {
+        try {
+          const data = await api("/v1/tasks");
+          const tasks = (data && data.tasks) || [];
+          if (!tasks.length) {
+            appendMsg("system", "no tool tasks recorded", "system");
+          } else {
+            const lines = tasks.map((t, i) => {
+              const dur = t.durationMs ? (" " + (t.durationMs / 1000).toFixed(1) + "s") : "";
+              return String(i + 1).padStart(2, " ") + " " + (t.name || "?") + "  " + (t.status || "") + dur;
+            });
+            appendMsg("system", lines.join("\n"), "system");
+          }
+        } catch (err) {
+          appendMsg("system", String(err.message || err), "system");
+        }
+        return true;
+      }
+      case "agents": {
+        try {
+          const data = await api("/v1/delegates");
+          appendMsg("system", JSON.stringify((data && data.tasks) || [], null, 2), "system");
+        } catch (err) {
+          appendMsg("system", String(err.message || err), "system");
+        }
+        return true;
+      }
+      case "permissions":
+        await refreshPermissions().catch((e) => appendMsg("system", String(e.message || e), "system"));
+        if (isNarrow()) openSessionsDrawer();
+        appendMsg("system", "Permissions panel refreshed.", "system");
+        return true;
+      case "approve":
+      case "deny": {
+        if (!arg) {
+          appendMsg("system", "usage: /" + cmd + " REQUEST_ID", "system");
+          return true;
+        }
+        try {
+          await api("/v1/permissions/" + encodeURIComponent(arg), {
+            method: "POST",
+            body: JSON.stringify({ approve: cmd === "approve" }),
+          });
+          await refreshPermissions();
+          appendMsg("system", "permission decision recorded", "system");
+        } catch (err) {
+          appendMsg("system", String(err.message || err), "system");
+        }
+        return true;
+      }
+      case "revoke": {
+        const parts = arg.split(/\s+/).filter(Boolean);
+        if (parts.length !== 2) {
+          appendMsg("system", "usage: /revoke TASK CAPABILITY", "system");
+          return true;
+        }
+        try {
+          await api("/v1/delegates", {
+            method: "POST",
+            body: JSON.stringify({ action: "revoke", taskId: parts[0], capability: parts[1] }),
+          });
+          appendMsg("system", "permission revoked", "system");
+        } catch (err) {
+          appendMsg("system", String(err.message || err), "system");
+        }
+        return true;
+      }
+      case "settings": {
+        try {
+          if (!arg) {
+            const data = await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "settings" }) });
+            appendMsg("system", "parallel=" + data.parallel + " compactionThreshold=" + data.compactionThreshold, "system");
+          } else {
+            const parts = arg.split(/\s+/);
+            const key = parts[0];
+            const val = parts[1];
+            const payload = { action: "settings" };
+            if (key === "delegate-parallel" || key === "parallel") payload.parallel = Number(val);
+            else if (key === "compaction-threshold" || key === "compactionThreshold") payload.compactionThreshold = Number(val);
+            else {
+              appendMsg("system", "usage: /settings [delegate-parallel N|compaction-threshold R]", "system");
+              return true;
+            }
+            const data = await api("/v1/session", { method: "POST", body: JSON.stringify(payload) });
+            appendMsg("system", "settings updated: " + JSON.stringify(data), "system");
+          }
+        } catch (err) {
+          appendMsg("system", String(err.message || err), "system");
+        }
+        return true;
+      }
+      case "compact":
+        try {
+          const data = await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "compact" }) });
+          appendMsg("system", (data && data.message) || "Compaction requested", "system");
+        } catch (err) {
+          appendMsg("system", String(err.message || err), "system");
+        }
+        return true;
       case "status": {
         const s = state.session;
-const parts = [
+        const parts = [
           "connection: " + (state.connected ? "live" : "offline"),
           "relay: " + ($("relayURL").value.trim() || "(none)"),
           "base: " + (state.base || "(none)"),
           "session: " + (s && s.id ? s.id : "(none)"),
-          "state: " + (s && s.state ? s.state : "n/a"),
+          "workspace: " + (s && s.workspace ? s.workspace : "n/a"),
+          "state: " + (s && (s.state || s.status) ? (s.state || s.status) : "n/a"),
           "model: " + (s && s.model ? s.model : "n/a"),
+          "mode: " + (s && s.mode ? s.mode : "n/a"),
           "agents: " + state.agents.length,
         ];
         appendMsg("system", parts.join("\n"), "system");
+        return true;
+      }
+      case "pwd": {
+        const s = state.session;
+        appendMsg("system", "workspace: " + ((s && s.workspace) || "(none)") + "  (session " + ((s && s.id) || "none") + ")", "system");
         return true;
       }
       case "stop":
@@ -1237,11 +1582,41 @@ const parts = [
     }
   }
 
-  /* —— Wiring —— */
+  /* —— Wiring  /* —— Wiring —— */
   $("btnConnect").onclick = connect;
   $("btnDisconnect").onclick = disconnect;
   $("btnSend").onclick = send;
   $("btnNew").onclick = createSession;
+  $("btnCreateCancel").onclick = closeCreateDialog;
+  $("btnCreateConfirm").onclick = confirmCreateSession;
+  $("createWorkspace").addEventListener("input", () => { updatePathCompletions().catch(() => {}); });
+  $("createWorkspace").addEventListener("keydown", (ev) => {
+    const open = $("pathMenu").classList.contains("open");
+    if (!open) {
+      if (ev.key === "Escape") { closeCreateDialog(); }
+      return;
+    }
+    if (ev.key === "ArrowDown") {
+      ev.preventDefault();
+      state.pathCursor = Math.min(state.pathCursor + 1, state.pathMatches.length - 1);
+    } else if (ev.key === "ArrowUp") {
+      ev.preventDefault();
+      state.pathCursor = Math.max(state.pathCursor - 1, 0);
+    } else if (ev.key === "Enter" && state.pathMatches[state.pathCursor]) {
+      ev.preventDefault();
+      applyPathCompletion(state.pathMatches[state.pathCursor].path);
+      return;
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      closePathMenu();
+      return;
+    } else {
+      return;
+    }
+    [...$("pathMenu").children].forEach((el, i) => el.setAttribute("aria-selected", i === state.pathCursor ? "true" : "false"));
+  });
+  $("createDialog").addEventListener("click", (ev) => { if (ev.target === $("createDialog")) closeCreateDialog(); });
+
   $("btnStop").onclick = stopSession;
 $("btnRefresh").onclick = () => {
     refreshAgents()

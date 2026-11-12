@@ -19,7 +19,7 @@ const check = (name, ok, detail = '') => {
   if (!ok) failures++;
 };
 
-const posted = { messages: [], permissions: [], selects: [] };
+const posted = { messages: [], permissions: [], selects: [], creates: [], sessions: [], fs: [], delegates: [] };
 const sseClients = new Set();
 let primaryId = ''; // unbound until web POSTs /select (mirrors desktop Bridge)
 
@@ -53,10 +53,34 @@ const server = createServer((req, res) => {
   }
   if (pathname === '/healthz') return sendJSON(200, { ok: true, bound: Boolean(primaryId) });
   if (pathname === '/v1/agents' && req.method === 'GET') {
-    return sendJSON(200, {
-      agents: [{ id: 'sess-1', status: 'idle', model: 'demo' }],
-      primaryId,
+    const agents = posted.creates.length
+      ? posted.creates.map((c) => ({ id: c.id, status: 'idle', model: c.model || 'demo', workspace: c.workspace }))
+      : [{ id: 'sess-1', status: 'idle', model: 'demo', workspace: '/home/demo' }];
+    if (!posted.creates.length) agents[0] = { id: 'sess-1', status: 'idle', model: 'demo', workspace: '/home/demo' };
+    // Keep initial agent plus any created ones
+    const list = [{ id: 'sess-1', status: 'idle', model: 'demo', workspace: '/home/demo' }, ...posted.creates.map((c) => ({ id: c.id, status: 'active', model: c.model || 'demo', workspace: c.workspace }))];
+    // de-dupe by id
+    const seen = new Set();
+    const uniq = [];
+    for (const a of list) {
+      if (seen.has(a.id)) continue;
+      seen.add(a.id);
+      uniq.push(a);
+    }
+    return sendJSON(200, { agents: uniq, primaryId });
+  }
+  if (pathname === '/v1/agents' && req.method === 'POST') {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+      const id = 'sess-created';
+      const created = { id, workspace: body.workspace, model: body.model || 'demo', mode: body.mode || 'off' };
+      posted.creates.push(created);
+      primaryId = id;
+      sendJSON(201, created);
     });
+    return;
   }
   if (pathname.startsWith('/v1/agents/') && pathname.endsWith('/select') && req.method === 'POST') {
     const id = decodeURIComponent(pathname.slice('/v1/agents/'.length, -'/select'.length).replace(/\/$/, ''));
@@ -66,10 +90,63 @@ const server = createServer((req, res) => {
   }
   if (pathname === '/v1/session' && req.method === 'GET') {
     if (!primaryId) return sendJSON(503, { error: 'no primary agent' });
-    return sendJSON(200, { id: primaryId, status: 'idle', model: 'demo' });
+    const created = posted.creates.find((c) => c.id === primaryId);
+    return sendJSON(200, {
+      id: primaryId,
+      status: 'idle',
+      state: 'idle',
+      model: (created && created.model) || 'demo',
+      mode: (created && created.mode) || 'off',
+      workspace: (created && created.workspace) || '/home/demo',
+    });
   }
   if (pathname === '/v1/session' && req.method === 'POST') {
-    return sendJSON(405, { error: 'method not allowed' });
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+      posted.sessions.push(body);
+      if (body.action === 'stop') {
+        primaryId = '';
+        return sendJSON(200, { ok: true, action: 'stop' });
+      }
+      if (body.action === 'continue' || body.action === 'compact') {
+        return sendJSON(202, { ok: true, action: body.action, message: 'ok' });
+      }
+      if (body.action === 'settings' && body.parallel == null && body.compactionThreshold == null) {
+        return sendJSON(200, { ok: true, action: 'settings', parallel: 2, compactionThreshold: 0.8 });
+      }
+      return sendJSON(200, { ok: true, ...body });
+    });
+    return;
+  }
+  if (pathname === '/v1/models' && req.method === 'GET') {
+    return sendJSON(200, { models: [{ id: 'demo', name: 'Demo' }, { id: 'other', name: 'Other' }] });
+  }
+  if (pathname === '/v1/tasks' && req.method === 'GET') {
+    return sendJSON(200, { tasks: [{ id: 't1', name: 'bash', status: 'done', durationMs: 1200 }] });
+  }
+  if (pathname === '/v1/delegates' && req.method === 'GET') {
+    return sendJSON(200, { tasks: [{ id: 'child', status: 'waiting_permission' }] });
+  }
+  if (pathname === '/v1/delegates' && req.method === 'POST') {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      posted.delegates.push(JSON.parse(Buffer.concat(chunks).toString() || '{}'));
+      sendJSON(200, { ok: true });
+    });
+    return;
+  }
+  if (pathname === '/v1/fs' && req.method === 'GET') {
+    posted.fs.push(url.pathname + url.search);
+    const pathArg = url.searchParams.get('path') || '/home/demo';
+    const prefix = url.searchParams.get('prefix') || '';
+    const dirs = [
+      { name: 'Projects', path: '/home/demo/Projects' },
+      { name: 'proj', path: '/home/demo/proj' },
+    ].filter((d) => !prefix || d.name.startsWith(prefix));
+    return sendJSON(200, { path: pathArg === '~' ? '/home/demo' : pathArg, home: '/home/demo', directories: dirs });
   }
 if (pathname === '/v1/history' && req.method === 'GET') {
     if (!primaryId) return sendJSON(503, { error: 'no primary agent' });
@@ -211,6 +288,12 @@ function buildDOM() {
       onclick: null,
       onmousedown: null,
       _listeners: {},
+      classList: {
+        _set: new Set(),
+        contains(c) { return this._set.has(c); },
+        add(c) { this._set.add(c); el.className = [...this._set].join(' '); },
+        remove(c) { this._set.delete(c); el.className = [...this._set].join(' '); },
+      },
       setAttribute(k, v) { this.attributes[k] = String(v); if (k === 'aria-hidden') this._ariaHidden = String(v); },
       getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null; },
       removeAttribute(k) { delete this.attributes[k]; },
@@ -246,9 +329,20 @@ function buildDOM() {
     'btnSessions', 'btnCloseSessions', 'drawerBackdrop', 'sidebar', 'chat',
     'sessionLabel', 'btnNew', 'btnStop', 'btnRefresh', 'transcript', 'composer',
     'hint', 'btnSend', 'sessions', 'permissions', 'btnRefreshAgents', 'btnRefreshPerms',
-    'slashMenu',
+    'slashMenu', 'createDialog', 'createTitle', 'createWorkspace', 'pathMenu',
+    'createModel', 'createMode', 'createHint', 'btnCreateCancel', 'btnCreateConfirm',
   ];
-  for (const id of ids) byId.set(id, makeEl(id.startsWith('btn') || id === 'drawerBackdrop' ? 'button' : id === 'composer' ? 'textarea' : id.includes('token') || id === 'relayURL' ? 'input' : 'div'));
+  for (const id of ids) {
+    const tag = id.startsWith('btn') || id === 'drawerBackdrop' ? 'button'
+      : id === 'composer' ? 'textarea'
+      : id === 'createModel' || id === 'createMode' ? 'select'
+      : id.includes('token') || id === 'relayURL' || id === 'createWorkspace' ? 'input'
+      : 'div';
+    byId.set(id, makeEl(tag));
+  }
+  byId.get('createDialog').hidden = true;
+  byId.get('createModel').innerHTML = '<option value="">default</option><option value="demo">demo</option>';
+  byId.get('createMode').innerHTML = '<option value="off">off</option><option value="lite">lite</option>';
 byId.get('relayURL').value = origin;
   byId.get('token').value = 'web-e2e-token';
 
@@ -257,9 +351,11 @@ byId.get('relayURL').value = origin;
     classList: {
       _set: new Set(),
       contains(c) { return this._set.has(c); },
-      add(c) { this._set.add(c); },
-      remove(c) { this._set.delete(c); },
+      add(c) { this._set.add(c); this._sync(); },
+      remove(c) { this._set.delete(c); this._sync(); },
+      _sync() { body.className = [...this._set].join(' '); },
     },
+    className: '',
     style: {},
   };
 
@@ -296,6 +392,7 @@ const context = {
   fetch: globalThis.fetch.bind(globalThis),
   matchMedia: dom.matchMedia,
   URL,
+  URLSearchParams,
   setTimeout,
   clearTimeout,
   console,
@@ -350,7 +447,7 @@ check(
 );
 check(
   'refresh/create reopen after bind without connected gate',
-  /createSession[\s\S]{0,500}if \(bound\) openEvents\(\)/.test(script)
+  /confirmCreateSession[\s\S]{0,2000}if \(bound\) openEvents\(\)/.test(script)
     && /btnRefresh[\s\S]{0,500}if \(bound\) openEvents\(\)/.test(script)
     && !/if \(bound && state\.connected\) openEvents\(\)/.test(script),
 );
@@ -371,6 +468,42 @@ if (permItem) {
   await sleep(40);
 }
 check('permission posts approve:true', posted.permissions.some((p) => p.body && p.body.approve === true));
+
+
+check('slash catalog includes remote commands', ['continue','model','principle','tasks','agents','permissions','approve','deny','revoke','settings','compact','pwd'].every((n) => script.includes('name: "' + n + '"')));
+check('create dialog markers', HTML.includes('id="createDialog"') && script.includes('/v1/fs') && script.includes('confirmCreateSession'));
+
+$('composer').value = '/pwd';
+await $('btnSend').onclick();
+await sleep(30);
+check('slash /pwd works', transcriptText().includes('workspace:'));
+
+$('composer').value = '/tasks';
+await $('btnSend').onclick();
+await sleep(40);
+check('slash /tasks works', transcriptText().includes('bash'));
+
+$('composer').value = '/settings';
+await $('btnSend').onclick();
+await sleep(40);
+check('slash /settings works', transcriptText().includes('parallel=') && posted.sessions.some((s) => s.action === 'settings'));
+
+// Create dialog path completion + confirm
+await $('btnNew').onclick();
+await sleep(200);
+check('create dialog opens', context.document.body.className.includes('create-open') || !$('createDialog').hidden);
+check('fs list called for path completion', posted.fs.length > 0, JSON.stringify(posted.fs));
+$('createWorkspace').value = '/home/demo/Pro';
+$('createWorkspace').dispatchEvent('input');
+await sleep(100);
+$('createWorkspace').value = '/home/demo/Projects';
+$('createModel').value = 'demo';
+$('createMode').value = 'lite';
+await $('btnCreateConfirm').onclick();
+await sleep(250);
+check('POST /v1/agents create body', posted.creates.length === 1 && posted.creates[0].workspace === '/home/demo/Projects' && posted.creates[0].mode === 'lite', JSON.stringify(posted.creates));
+check('create selects new primary', primaryId === 'sess-created' && posted.selects.includes('sess-created'), JSON.stringify(posted.selects) + ' primary=' + primaryId);
+check('session label after create', ($('sessionLabel').textContent || '').includes('sess-created'), $('sessionLabel').textContent);
 
 server.close();
 console.log(`\nweb-protocol: ${failures ? failures + ' failed' : 'all passed'}`);
