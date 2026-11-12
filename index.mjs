@@ -32,8 +32,10 @@ import {
     VERSION,
     authorize,
     bearerOf,
+    corsHeaders,
     decodeBinary,
     encodeBinary,
+    isCorsPreflight,
     isTokenHash,
     negotiateProtocol,
     parseClientPath,
@@ -459,7 +461,11 @@ function respondJson(res, status, obj, extraHeaders = {}) {
         res.destroy();
         return;
     }
-    res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*', ...extraHeaders });
+    res.writeHead(status, {
+        'content-type': 'application/json',
+        ...(res.corsHeaders || { 'access-control-allow-origin': '*' }),
+        ...extraHeaders,
+    });
     res.end(JSON.stringify(obj));
 }
 
@@ -515,6 +521,15 @@ const server = createServer((req, res) => {
     const parsed = parseClientPath(url);
     if (!parsed) {
         respondJson(res, 404, { error: 'Not found' });
+        return;
+    }
+
+    // Browser clients (separately hosted pages) need CORS on every /c/* reply,
+    // including tunneled desktop JSON/SSE — not only the local JSON helpers.
+    res.corsHeaders = corsHeaders(req.headers);
+    if (isCorsPreflight(req.method)) {
+        res.writeHead(204, res.corsHeaders);
+        res.end();
         return;
     }
 
@@ -814,7 +829,7 @@ function handleAgent(ws) {
                 }
                 clearTimeout(entry.timer);
                 entry.headSent = true;
-                const headers = { ...(frame.headers || {}) };
+                const headers = { ...(frame.headers || {}), ...(entry.res.corsHeaders || {}) };
                 delete headers.connection;
                 delete headers['keep-alive'];
                 delete headers['transfer-encoding'];

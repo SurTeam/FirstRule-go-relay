@@ -26,8 +26,10 @@ import {
     b64decode,
     b64encode,
     bearerOf,
+    corsHeaders,
     decodeBinary,
     encodeBinary,
+    isCorsPreflight,
     isTokenHash,
     negotiateProtocol,
     parseClientPath,
@@ -69,14 +71,29 @@ function concatBytes(parts, length) {
     return out;
 }
 
-const json = (status, obj) =>
-    new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' } });
+const json = (status, obj, requestHeaders) =>
+    new Response(JSON.stringify(obj), {
+        status,
+        headers: {
+            'content-type': 'application/json',
+            ...(requestHeaders ? corsHeaders(requestHeaders) : { 'access-control-allow-origin': '*' }),
+        },
+    });
+
+/** Copy Access-Control-* onto a tunneled Response without disturbing its body stream. */
+function withCors(response, request) {
+    const headers = new Headers(response.headers);
+    for (const [key, value] of Object.entries(corsHeaders(Object.fromEntries(request.headers)))) {
+        headers.set(key, value);
+    }
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 
 // Marks the "no desktop in this tunnel" answer, so the worker can tell it
 // from a 502 the desktop itself sent (see legacy tunnels below).
 const OFFLINE_HEADER = 'x-alma-tunnel-offline';
-const offline = () => {
-    const res = json(502, { error: 'Desktop is offline or the connect code is invalid' });
+const offline = request => {
+    const res = json(502, { error: 'Desktop is offline or the connect code is invalid' }, request?.headers);
     res.headers.set(OFFLINE_HEADER, '1');
     return res;
 };
@@ -119,13 +136,19 @@ export default {
         }
 
         const parsed = parseClientPath(url.pathname);
-        if (!parsed) return json(404, { error: 'Not found' });
+        if (!parsed) return json(404, { error: 'Not found' }, request.headers);
+
+        // Separately hosted browser clients need preflight + ACAO on every /c/* reply,
+        // including tunneled desktop JSON/SSE — not only local JSON helpers.
+        if (isCorsPreflight(request.method)) {
+            return new Response(null, { status: 204, headers: corsHeaders(Object.fromEntries(request.headers)) });
+        }
 
         const th = await sha256hex(parsed.code);
         const target = `https://tunnel${parsed.rest}${url.search}`;
         const legacy = legacyTunnelFor(env, th);
         const tunnel = tunnelFor(env, th);
-        if (!legacy) return tunnel.fetch(clientRequest(target, request));
+        if (!legacy) return withCors(await tunnel.fetch(clientRequest(target, request)), request);
 
         // A large or chunked body: buffering it here would undo streaming to
         // the desktop, so ask the hinted tunnel whether the desktop is there
@@ -133,7 +156,8 @@ export default {
         const length = Number(request.headers.get('content-length'));
         if (request.body && !(length <= SMALL_BODY)) {
             const probe = await tunnel.fetch(new Request('https://tunnel/', { headers: { 'x-alma-tunnel-role': 'probe' } }));
-            return (probe.headers.has(OFFLINE_HEADER) ? legacy : tunnel).fetch(clientRequest(target, request));
+            const chosen = probe.headers.has(OFFLINE_HEADER) ? legacy : tunnel;
+            return withCors(await chosen.fetch(clientRequest(target, request)), request);
         }
 
         // The request may go to two tunnels, so read its body once up front
@@ -142,12 +166,12 @@ export default {
         let init = request;
         if (request.body) {
             const body = await request.arrayBuffer();
-            if (body.byteLength > MAX_BODY) return json(413, { error: 'Request body too large' });
+            if (body.byteLength > MAX_BODY) return json(413, { error: 'Request body too large' }, request.headers);
             init = { method: request.method, headers: request.headers, body, signal: request.signal };
         }
         const response = await tunnel.fetch(clientRequest(target, init));
-        if (!response.headers.has(OFFLINE_HEADER)) return response;
-        return legacy.fetch(clientRequest(target, init));
+        if (!response.headers.has(OFFLINE_HEADER)) return withCors(response, request);
+        return withCors(await legacy.fetch(clientRequest(target, init)), request);
     },
 };
 

@@ -246,3 +246,30 @@ export async function turnCredentials(env, subject) {
 
 /** Bearer value of an Authorization header. */
 export const bearerOf = header => String(header || '').replace(/^Bearer\s+/i, '').trim();
+
+// ---------------------------------------------------------------------------
+// Browser CORS for separately hosted web clients hitting /c/<token>/…
+// Tunneled desktop API responses do not carry Access-Control-* themselves.
+// ---------------------------------------------------------------------------
+export const CORS_ALLOW_HEADERS = 'content-type, authorization, accept, cache-control';
+export const CORS_ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD';
+
+/** Headers every browser client response needs (including SSE EventSource). */
+export function corsHeaders(requestHeaders = {}) {
+    const fromGet = typeof requestHeaders?.get === 'function' ? requestHeaders.get('origin') : null;
+    const origin = String(fromGet || requestHeaders.origin || requestHeaders.Origin || '*').trim() || '*';
+    return {
+        'access-control-allow-origin': origin === 'null' ? '*' : origin,
+        'access-control-allow-methods': CORS_ALLOW_METHODS,
+        'access-control-allow-headers': CORS_ALLOW_HEADERS,
+        'access-control-expose-headers': 'content-type, cache-control',
+        'access-control-max-age': '86400',
+        vary: 'Origin',
+    };
+}
+
+/** True when the browser is asking permission before a cross-origin call. */
+export function isCorsPreflight(method) {
+    return String(method || '').toUpperCase() === 'OPTIONS';
+}
+

@@ -28,10 +28,17 @@ type Session struct {
 	unacked  map[string]int
 	waiting  map[string]chan struct{}
 	http     map[string]context.CancelFunc
+	uploads  map[string]*bodyUpload
 	sockets  map[string]*websocket.Conn
 	closed   chan struct{}
 	closeErr error
 	client   *http.Client
+}
+
+// bodyUpload is a streamed request body pipe for protocol >= 2.
+type bodyUpload struct {
+	pr *io.PipeReader
+	pw *io.PipeWriter
 }
 
 // Dial connects to the relay, registers, and starts serving the local backend
@@ -54,7 +61,7 @@ func Dial(ctx context.Context, cfg Config) (*Session, error) {
 	}
 	conn.SetReadLimit(32 << 20)
 
-	s := &Session{
+s := &Session{
 		cfg:     cfg,
 		conn:    conn,
 		proto:   1,
@@ -62,6 +69,7 @@ func Dial(ctx context.Context, cfg Config) (*Session, error) {
 		unacked: make(map[string]int),
 		waiting: make(map[string]chan struct{}),
 		http:    make(map[string]context.CancelFunc),
+		uploads: make(map[string]*bodyUpload),
 		sockets: make(map[string]*websocket.Conn),
 		closed:  make(chan struct{}),
 		client:  &http.Client{Timeout: 0},
@@ -180,34 +188,52 @@ func (s *Session) shutdown(err error) {
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
 			s.closeErr = err
 		}
-		for _, cancel := range s.http {
-			cancel()
-		}
-		for id, c := range s.sockets {
-			_ = c.Close(websocket.StatusGoingAway, "agent closed")
-			delete(s.sockets, id)
-		}
-		close(s.closed)
+for _, cancel := range s.http {
+				cancel()
+			}
+			for id, up := range s.uploads {
+				if up != nil && up.pw != nil {
+					_ = up.pw.CloseWithError(io.ErrClosedPipe)
+				}
+				delete(s.uploads, id)
+			}
+			for id, c := range s.sockets {
+				_ = c.Close(websocket.StatusGoingAway, "agent closed")
+				delete(s.sockets, id)
+			}
+			close(s.closed)
 	}
 }
 
 func (s *Session) onFrame(ctx context.Context, t string, data []byte) error {
 	switch t {
-	case "hreq":
-		var f hreqFrame
-		if err := json.Unmarshal(data, &f); err != nil {
-			return err
-		}
-		go s.handleHTTP(ctx, f)
+case "hreq":
+			var f hreqFrame
+			if err := json.Unmarshal(data, &f); err != nil {
+				return err
+			}
+			// Register the stream pipe before the handler goroutine so early HBODY
+			// frames are not dropped (empty body → backend "invalid JSON body").
+			if f.Stream {
+				pr, pw := io.Pipe()
+				s.mu.Lock()
+				s.uploads[f.ID] = &bodyUpload{pr: pr, pw: pw}
+				s.mu.Unlock()
+			}
+			go s.handleHTTP(ctx, f)
 	case "hcancel":
 		var f idFrame
 		if err := json.Unmarshal(data, &f); err != nil {
 			return err
 		}
 		s.cancelHTTP(f.ID)
-	case "hreqend":
-		// streamed body complete; handled via body pumps
-		return nil
+case "hreqend":
+			var f idFrame
+			if err := json.Unmarshal(data, &f); err != nil {
+				return err
+			}
+			s.finishUpload(f.ID, nil)
+			return nil
 	case "wopen":
 		var f idFrame
 		// path is required; decode loosely
@@ -251,12 +277,8 @@ func (s *Session) onBinary(ctx context.Context, frame []byte) error {
 		return err
 	}
 	switch kind {
-	case BinHBody:
-		// streamed request body; attach to pending request via side channel if needed
-		_ = ctx
-		_ = id
-		_ = data
-		return nil
+case BinHBody:
+			return s.writeUpload(ctx, id, data)
 	case BinWBin, BinWText:
 		s.mu.Lock()
 		local := s.sockets[id]
@@ -286,6 +308,7 @@ func (s *Session) handleHTTP(parent context.Context, f hreqFrame) {
 		s.mu.Lock()
 		delete(s.http, f.ID)
 		s.mu.Unlock()
+		s.finishUpload(f.ID, io.ErrClosedPipe)
 	}()
 
 	body, err := decodeBody(f.B)
@@ -310,8 +333,18 @@ func (s *Session) handleHTTP(parent context.Context, f hreqFrame) {
 	}
 	target.Scheme, target.Host = backend.Scheme, backend.Host
 
-	var bodyReader io.Reader
-	if len(body) > 0 {
+var bodyReader io.Reader
+	if f.Stream {
+		s.mu.Lock()
+		up := s.uploads[f.ID]
+		if up == nil {
+			pr, pw := io.Pipe()
+			up = &bodyUpload{pr: pr, pw: pw}
+			s.uploads[f.ID] = up
+		}
+		s.mu.Unlock()
+		bodyReader = up.pr
+	} else if len(body) > 0 {
 		bodyReader = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(reqCtx, f.Method, target.String(), bodyReader)
@@ -516,6 +549,39 @@ func (s *Session) cancelHTTP(id string) {
 	if cancel != nil {
 		cancel()
 	}
+	s.finishUpload(id, io.ErrClosedPipe)
+}
+
+func (s *Session) writeUpload(ctx context.Context, id string, data []byte) error {
+	s.mu.Lock()
+	up := s.uploads[id]
+	s.mu.Unlock()
+	if up == nil || up.pw == nil {
+		return nil
+	}
+	n, err := up.pw.Write(data)
+	if n > 0 {
+		_ = s.writeJSON(ctx, idFrame{T: "hack", ID: id, N: n})
+	}
+	if err != nil && !errors.Is(err, io.ErrClosedPipe) {
+		return err
+	}
+	return nil
+}
+
+func (s *Session) finishUpload(id string, err error) {
+	s.mu.Lock()
+	up := s.uploads[id]
+	delete(s.uploads, id)
+	s.mu.Unlock()
+	if up == nil || up.pw == nil {
+		return
+	}
+	if err != nil {
+		_ = up.pw.CloseWithError(err)
+		return
+	}
+	_ = up.pw.Close()
 }
 
 func (s *Session) spent(id string, n int) {
