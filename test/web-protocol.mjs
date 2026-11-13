@@ -19,9 +19,30 @@ const check = (name, ok, detail = '') => {
   if (!ok) failures++;
 };
 
-const posted = { messages: [], permissions: [], selects: [], creates: [], sessions: [], fs: [], delegates: [] };
+const posted = { history: 0, resumes: [], requests: [], messages: [], permissions: [], selects: [], creates: [], sessions: [], fs: [], delegates: [] };
 const sseClients = new Set();
 let primaryId = ''; // unbound until web POSTs /select (mirrors desktop Bridge)
+
+const resumed = new Set();
+const bigHistory = { on: false };
+function historyFor(id) {
+  if (bigHistory.on) {
+    const messages = [];
+    for (let i = 0; i < 130; i++) messages.push({ role: i % 2 ? 'assistant' : 'user', text: 'bulk ' + i });
+    return { id, messages, tasks: [] };
+  }
+  if (id === 'sess-old') return { id, messages: [{ role: 'user', text: 'old question' }, { role: 'assistant', text: 'old answer' }], tasks: [] };
+  return {
+    id,
+    messages: [
+      { role: 'user', text: 'hello history' },
+      { role: 'assistant', text: 'hi from history' },
+      { role: 'thinking', text: 'ponder' },
+      { role: 'tool_call', taskId: 't1' },
+    ],
+    tasks: [{ id: 't1', name: 'bash', status: 'done', output: 'ok' }],
+  };
+}
 
 function broadcast(type, data) {
   const payload = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -51,6 +72,7 @@ const server = createServer((req, res) => {
     });
     return res.end();
   }
+  posted.requests.push(req.method + ' ' + pathname);
   if (pathname === '/healthz') return sendJSON(200, { ok: true, bound: Boolean(primaryId) });
   if (pathname === '/v1/agents' && req.method === 'GET') {
     const agents = posted.creates.length
@@ -58,7 +80,7 @@ const server = createServer((req, res) => {
       : [{ id: 'sess-1', status: 'idle', model: 'demo', workspace: '/home/demo' }];
     if (!posted.creates.length) agents[0] = { id: 'sess-1', status: 'idle', model: 'demo', workspace: '/home/demo' };
     // Keep initial agent plus any created ones
-    const list = [{ id: 'sess-1', status: 'idle', model: 'demo', workspace: '/home/demo' }, ...posted.creates.map((c) => ({ id: c.id, status: 'active', model: c.model || 'demo', workspace: c.workspace }))];
+    const list = [{ id: 'sess-1', status: 'idle', model: 'demo', workspace: '/home/demo' }, ...[...resumed].map((id) => ({ id, status: 'idle', model: 'demo', workspace: '/home/demo' })), ...posted.creates.map((c) => ({ id: c.id, status: 'active', model: c.model || 'demo', workspace: c.workspace }))];
     // de-dupe by id
     const seen = new Set();
     const uniq = [];
@@ -74,6 +96,11 @@ const server = createServer((req, res) => {
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+      if (body.resume) {
+        posted.resumes.push(body);
+        resumed.add(body.sessionId);
+        return sendJSON(201, { id: body.sessionId, workspace: body.workspace, model: 'demo', mode: 'off' });
+      }
       const id = 'sess-created';
       const created = { id, workspace: body.workspace, model: body.model || 'demo', mode: body.mode || 'off' };
       posted.creates.push(created);
@@ -149,16 +176,17 @@ const server = createServer((req, res) => {
     return sendJSON(200, { path: pathArg === '~' ? '/home/demo' : pathArg, home: '/home/demo', directories: dirs });
   }
 if (pathname === '/v1/history' && req.method === 'GET') {
+    posted.history++;
     if (!primaryId) return sendJSON(503, { error: 'no primary agent' });
+    return sendJSON(200, historyFor(primaryId));
+  }
+  if (pathname === '/v1/sessions' && req.method === 'GET') {
     return sendJSON(200, {
-      id: primaryId,
-      messages: [
-        { role: 'user', text: 'hello history' },
-        { role: 'assistant', text: 'hi from history' },
-        { role: 'thinking', text: 'ponder' },
-        { role: 'tool_call', taskId: 't1' },
+      workspace: '/home/demo',
+      sessions: [
+        { id: 'sess-1', summary: 'current one', running: true, lastUserAt: Date.now() - 60000 },
+        { id: 'sess-old', summary: 'older work', running: false, workspace: '/home/demo', lastUserAt: Date.now() - 7200000 },
       ],
-      tasks: [{ id: 't1', name: 'bash', status: 'done', output: 'ok' }],
     });
   }
   if (pathname === '/v1/permissions' && req.method === 'GET') {
@@ -198,6 +226,8 @@ if (pathname === '/v1/history' && req.method === 'GET') {
       'access-control-allow-origin': '*',
     });
     res.write(': ok\n\n');
+    // Like the desktop: subscribe, then send the persisted snapshot first.
+    if (primaryId) res.write(`event: history\ndata: ${JSON.stringify(historyFor(primaryId))}\n\n`);
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
     return;
@@ -293,6 +323,7 @@ function buildDOM() {
         contains(c) { return this._set.has(c); },
         add(c) { this._set.add(c); el.className = [...this._set].join(' '); },
         remove(c) { this._set.delete(c); el.className = [...this._set].join(' '); },
+        toggle(c, on) { if (on === undefined) on = !this._set.has(c); if (on) this.add(c); else this.remove(c); return on; },
       },
       setAttribute(k, v) { this.attributes[k] = String(v); if (k === 'aria-hidden') this._ariaHidden = String(v); },
       getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null; },
@@ -334,7 +365,7 @@ function buildDOM() {
     'createModel', 'createMode', 'createHint', 'btnCreateCancel', 'btnCreateConfirm',
     'btnSettings', 'btnSettingsClose', 'settingsDialog', 'settingsHint', 'autoConnect',
     'btnStopTurn', 'picker', 'statusLine', 'activity', 'phaseTrack', 'chips',
-    'chipModel', 'chipModelV', 'chipThinking', 'chipThinkingV', 'chipMode', 'chipModeV', 'chipUsage', 'chipUsageV',
+    'loading', 'chipModel', 'chipModelV', 'chipThinking', 'chipThinkingV', 'chipMode', 'chipModeV', 'chipUsage', 'chipUsageV',
   ];
   for (const id of ids) {
     const tag = id.startsWith('btn') || id === 'drawerBackdrop' ? 'button'
@@ -347,6 +378,7 @@ function buildDOM() {
   byId.get('createDialog').hidden = true;
   byId.get('settingsDialog').hidden = true;
   byId.get('picker').hidden = true;
+  byId.get('loading').hidden = true;
   byId.get('createModel').innerHTML = '<option value="">default</option><option value="demo">demo</option>';
   byId.get('createMode').innerHTML = '<option value="off">off</option><option value="lite">lite</option>';
 byId.get('relayURL').value = origin;
@@ -387,6 +419,8 @@ check('correct SSE event names', ['user_message', 'text_delta', 'system_notice',
 check('no legacy assistant_delta listener', !script.includes('assistant_delta'));
 check('permissions approve body', script.includes('JSON.stringify({ approve })'));
 check('history uses messages/tasks', script.includes('hist.messages') && script.includes('hist.tasks'));
+check('status line single row', /#statusLine \{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/.test(style) && /#phaseTrack \{[^}]*flex-wrap:\s*nowrap/.test(style));
+check('loading spinner markup', HTML.includes('id="loading"') && /@keyframes spin/.test(style));
 check('native-only assets', ![...HTML.matchAll(/<(?:link|script)[^>]*(?:href|src)=["']([^"']+)["']/g)].length);
 
 const dom = buildDOM();
@@ -547,6 +581,52 @@ await sleep(250);
 check('POST /v1/agents create body', posted.creates.length === 1 && posted.creates[0].workspace === '/home/demo/Projects' && posted.creates[0].mode === 'lite', JSON.stringify(posted.creates));
 check('create selects new primary', primaryId === 'sess-created' && posted.selects.includes('sess-created'), JSON.stringify(posted.selects) + ' primary=' + primaryId);
 check('session label after create', ($('sessionLabel').textContent || '').includes('sess-created'), $('sessionLabel').textContent);
+
+// /resume lists saved sessions and resumes a non-running one in the daemon.
+posted.history = 0;
+$('composer').value = '/resume';
+await $('btnSend').onclick();
+await sleep(80);
+const pickerButtons = $('picker').children.filter((c) => c.dataset && c.dataset.value);
+check('/resume picker lists saved sessions', !$('picker').hidden && pickerButtons.map((b) => b.dataset.value).join(',') === 'sess-1,sess-old', pickerButtons.map((b) => b.dataset.value).join(','));
+const reqBefore = posted.requests.length;
+const resumeDone = pickerButtons.find((b) => b.dataset.value === 'sess-old').onclick();
+await sleep(1);
+check('loading shown during switch', !$('loading').hidden);
+await resumeDone;
+await sleep(300);
+check('resume POSTs daemon resume', posted.resumes.length === 1 && posted.resumes[0].sessionId === 'sess-old' && posted.resumes[0].resume === true, JSON.stringify(posted.resumes));
+check('resume selects session', primaryId === 'sess-old', primaryId);
+check('switch renders history from SSE frame', transcriptText().includes('old answer') && !transcriptText().includes('hello history'), transcriptText());
+check('switch makes no /v1/history request', posted.history === 0, String(posted.history));
+check('loading hidden after history', $('loading').hidden);
+{
+  const after = posted.requests.slice(reqBefore);
+  const sel = after.findIndex((r) => r.endsWith('/select'));
+  const ev = after.findIndex((r) => r === 'GET /v1/events');
+  check('events opened right after select', sel >= 0 && ev === sel + 1, JSON.stringify(after));
+}
+
+// Live events during chunked history render are applied after it, in order;
+// a tool_done repeated across the overlap updates the same card.
+bigHistory.on = true;
+$('btnRefresh').onclick();
+for (let i = 0; i < 100 && !sseClients.size; i++) await sleep(2);
+await sleep(15);
+broadcast('tool_done', { type: 'tool_done', task: { id: 't-live', name: 'bash', status: 'success', output: 'x' } });
+broadcast('tool_done', { type: 'tool_done', task: { id: 't-live', name: 'bash', status: 'success', output: 'x' } });
+broadcast('system_notice', { type: 'system_notice', text: 'after-history' });
+await sleep(500);
+{
+  const lines = transcriptText().split('\n');
+  const lastBulk = lines.findIndex((l) => l.includes('bulk 129'));
+  const live = lines.findIndex((l) => l.includes('after-history'));
+  const tools = $('transcript').children.filter((c) => c._task && c._task.id === 't-live').length;
+  check('chunked history fully rendered', lines.filter((l) => /bulk \d+$/.test(l)).length === 130, String(lines.length));
+  check('live event after snapshot', lastBulk >= 0 && live > lastBulk, `bulk=${lastBulk} live=${live}`);
+  check('duplicate tool_done renders once', tools === 1, String(tools));
+}
+bigHistory.on = false;
 
 server.close();
 console.log(`\nweb-protocol: ${failures ? failures + ' failed' : 'all passed'}`);

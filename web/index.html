@@ -339,21 +339,43 @@ aside h2, .settings h2 {
   gap: 6px;
   background: var(--panel);
 }
+/* One row only: items never wrap; overflow scrolls sideways. */
 #statusLine {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   align-items: center;
   font-size: 12px;
   color: var(--muted);
-  min-height: 20px;
+  height: 20px;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+#statusLine::-webkit-scrollbar { display: none; }
+#statusLine > * { flex: none; }
 #statusLine .activity { color: var(--text); }
-#phaseTrack { display: inline-flex; gap: 2px; flex-wrap: wrap; }
+#statusLine #hint { flex: 1 1 auto; min-width: 4em; overflow: hidden; text-overflow: ellipsis; }
+#phaseTrack { display: inline-flex; gap: 2px; flex-wrap: nowrap; }
 .phase { padding: 1px 6px; border-radius: 6px; font-size: 11px; background: var(--panel-2); color: var(--dim); }
 .phase.done { color: var(--ok); }
 .phase.cur { background: #1d4ed8; color: #fff; }
 .phase.blocked { background: #7f1d1d; color: #fff; }
+#chat { position: relative; }
+.loading-overlay {
+  position: absolute; left: 0; right: 0; top: 0;
+  display: flex; gap: 8px; align-items: center; justify-content: center;
+  padding: 18px; color: var(--muted); font-size: 13px; pointer-events: none;
+}
+.loading-overlay[hidden] { display: none; }
+.spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--text);
+  animation: spin .8s linear infinite;
+}
+#transcript.loading { opacity: .55; transition: opacity .15s; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .composer-row { display: flex; gap: 6px; align-items: flex-end; }
 #composer {
   flex: 1;
@@ -557,6 +579,7 @@ body.drawer-open .drawer-backdrop { display: block; }
 
     <section id="chat">
       <div id="transcript" aria-live="polite"></div>
+      <div id="loading" class="loading-overlay" role="status" aria-label="Loading session" hidden><span class="spinner"></span><span>Loading session…</span></div>
       <div class="composer-wrap">
         <div id="slashMenu" role="listbox" aria-label="Command menu" aria-hidden="true"></div>
         <div id="picker" role="listbox" hidden></div>
@@ -880,6 +903,10 @@ body.drawer-open .drawer-backdrop { display: block; }
     primaryId: "",
     connected: false,
     historyLoadedFor: null,
+    historyToken: 0,
+    switchSeq: 0,
+    liveQueue: null,
+    loading: false,
     slashCursor: 0,
     slashMatches: [],
     stream: { asst: null, think: null, tools: {} },
@@ -896,7 +923,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   const SLASH_COMMANDS = [
     { name: "help", description: "show available commands" },
     { name: "new", description: "create a new session under a workspace" },
-    { name: "resume", description: "open the session list" },
+    { name: "resume", description: "resume a saved session of this workspace" },
     { name: "continue", description: "retry with the selected model" },
     { name: "model", description: "switch model (optional id)" },
     { name: "thinking", description: "pick thinking level" },
@@ -1347,10 +1374,13 @@ body.drawer-open .drawer-backdrop { display: block; }
     if (!wf || !wf.phases || !wf.phases.length) return;
     wf.phases.forEach((p, i) => {
       const cls = wf.complete || i < wf.index ? "done" : i === wf.index ? (wf.blocked ? "blocked" : "cur") : "";
-      const el = mk("span", "phase " + cls, (cls === "done" ? "✓ " : "") + p);
+      // Compact: only the current phase is spelled out; the rest use 3 letters.
+      const short = cls === "cur" || cls === "blocked" ? p : String(p).slice(0, 3);
+      const el = mk("span", "phase " + cls, (cls === "done" ? "✓" : "") + short);
+      el.title = p;
       box.appendChild(el);
     });
-    if (wf.complete) box.appendChild(mk("span", "phase done", "complete"));
+    if (wf.complete) box.appendChild(mk("span", "phase done", "✓ done"));
   }
 
   function updateSessionLabel() {
@@ -1490,40 +1520,73 @@ body.drawer-open .drawer-backdrop { display: block; }
     return data;
   }
 
-  function renderHistory(hist) {
+  // History arrives as the first SSE frame (the server subscribes before it
+  // reads the DB, so no live event is lost). Cards render in chunks per
+  // frame; live events that arrive meanwhile wait in state.liveQueue and are
+  // applied after the snapshot, in arrival order.
+  const HISTORY_CHUNK = 24;
+  function renderHistory(hist, done) {
+    const token = ++state.historyToken;
     clearTranscript();
     const msgs = (hist && hist.messages) || [];
     const tasks = (hist && hist.tasks) || [];
     const byID = {};
     for (const t of tasks) if (t && t.id) byID[t.id] = t;
-    for (const m of msgs) {
-      const role = (m && m.role) || "";
-      if (role === "user") appendUser(m.text || "");
-      else if (role === "assistant") appendAgent(m.text || "");
-      else if (role === "thinking") appendThinking(m.text || "", true);
-      else if (role === "system") {
-        const card = appendSystem(m.text || "");
-        if (m.noticeId) card.dataset.noticeId = m.noticeId;
-      } else if (role === "tool_call") {
-        upsertTool(byID[m.taskId] || { id: m.taskId, name: "tool", status: "aborted" });
+    let i = 0;
+    const step = () => {
+      if (token !== state.historyToken) return;
+      const end = Math.min(msgs.length, i + HISTORY_CHUNK);
+      for (; i < end; i++) {
+        const m = msgs[i];
+        const role = (m && m.role) || "";
+        if (role === "user") appendUser(m.text || "");
+        else if (role === "assistant") appendAgent(m.text || "");
+        else if (role === "thinking") appendThinking(m.text || "", true);
+        else if (role === "system") {
+          const card = appendSystem(m.text || "");
+          if (m.noticeId) card.dataset.noticeId = m.noticeId;
+        } else if (role === "tool_call") {
+          upsertTool(byID[m.taskId] || { id: m.taskId, name: "tool", status: "aborted" });
+        }
       }
-    }
-    resetStreamCards();
-    stickBottom(true);
+      if (i < msgs.length) { raf(step); return; }
+      // Keep history tool cards addressable so an overlapping live tool_done
+      // updates the same card instead of appending a duplicate.
+      const tools = state.stream.tools;
+      resetStreamCards();
+      state.stream.tools = tools;
+      stickBottom(true);
+      if (done) done();
+    };
+    step();
   }
 
-  async function loadHistory(sessionId) {
-    if (!sessionId || state.historyLoadedFor === sessionId) return;
-    try {
-      const hist = await api("/v1/history");
-      if (hist && hist.id && hist.id !== sessionId) throw new Error("history session mismatch: wanted " + sessionId + " got " + hist.id);
-      renderHistory(hist || { messages: [], tasks: [] });
-      state.historyLoadedFor = sessionId;
+  function setLoading(on) {
+    state.loading = Boolean(on);
+    const t = transcript();
+    if (t.classList) t.classList.toggle("loading", state.loading);
+    $("loading").hidden = !state.loading;
+  }
+
+  function onHistoryFrame(hist) {
+    if (hist && hist.error) {
+      appendError("history: " + hist.error);
+      flushLiveQueue();
+      return;
+    }
+    state.historyLoadedFor = (hist && hist.id) || null;
+    renderHistory(hist || { messages: [], tasks: [] }, () => {
       const n = ((hist && hist.messages) || []).length;
       if (n) setHint("Restored " + n + " history message(s).");
-    } catch (err) {
-      appendError("history: " + (err.message || err));
-    }
+      if (hist && hist.busy && !state.turnActive) { beginTurn(); setActivity("running"); }
+      flushLiveQueue();
+    });
+  }
+  function flushLiveQueue() {
+    const q = state.liveQueue || [];
+    state.liveQueue = null;
+    setLoading(false);
+    for (const [type, data] of q) handleAgentEvent(type, data);
   }
 
   function closeEvents() { if (state.es) { state.es.close(); state.es = null; } }
@@ -1531,13 +1594,26 @@ body.drawer-open .drawer-backdrop { display: block; }
   function openEvents() {
     closeEvents();
     resetStreamCards();
+    // Every (re)connect starts with a history frame; live events are buffered
+    // until it has rendered, so the view also resyncs after relay drops.
+    state.liveQueue = [];
+    setLoading(true);
     const es = new EventSource(state.base + "/v1/events");
     state.es = es;
+    const dispatch = (type, data) => {
+      if (state.es !== es) return;
+      if (state.liveQueue) state.liveQueue.push([type, data]);
+      else handleAgentEvent(type, data);
+    };
     const on = (type) => (ev) => {
       let data = {};
       try { data = JSON.parse(ev.data || "{}"); } catch { data = { text: ev.data || "" }; }
-      handleAgentEvent(type, data || {});
+      dispatch(type, data || {});
     };
+    es.addEventListener("history", (ev) => {
+      if (state.es !== es) return;
+      onHistoryFrame(parseJSON(ev.data || "{}") || {});
+    });
     [
       "user_message", "text_delta", "reasoning_delta", "reasoning_end", "system_notice",
       "tool_preparing", "tool_start", "tool_done", "stream_done", "turn_done", "agent_error", "permission_request",
@@ -1545,10 +1621,15 @@ body.drawer-open .drawer-backdrop { display: block; }
     es.onmessage = (ev) => {
       let data = {};
       try { data = JSON.parse(ev.data || "{}"); } catch { data = { text: ev.data || "" }; }
-      handleAgentEvent((data && data.type) || "message", data || {});
+      dispatch((data && data.type) || "message", data || {});
     };
     es.onopen = () => { if (!state.turnActive) setStatus(true, "live"); };
-    es.onerror = () => setStatus(false, "reconnecting");
+    es.onerror = () => {
+      if (state.es !== es) return;
+      setStatus(false, "reconnecting");
+      // EventSource reconnects by itself and receives a fresh history frame.
+      if (!state.liveQueue) state.liveQueue = [];
+    };
   }
 
   /* —— Sessions sidebar —— */
@@ -1622,7 +1703,6 @@ body.drawer-open .drawer-backdrop { display: block; }
       else throw err;
     }
     updateSessionLabel();
-    if (state.session && state.session.id) await loadHistory(state.session.id);
   }
 
   async function refreshPermissions() {
@@ -1743,12 +1823,10 @@ body.drawer-open .drawer-backdrop { display: block; }
         appendSystem("No running sessions on the desktop. Create one with ＋ New, or start one in the daemon and refresh.");
         setHint("Connected, but no session yet.");
       }
-      await refreshModels();
-      await refreshSession();
-      await refreshPermissions();
       // Subscribe only after BindPrimary: /v1/events snapshots the hub at open time.
       if (bound) openEvents();
       else setStatus(false, "waiting for session");
+      await Promise.all([refreshModels(), refreshSession(), refreshPermissions()]);
       if (!isNarrow()) $("composer").focus();
       if (bound) setHint("Connected. Type / for commands.");
     } catch (err) {
@@ -1782,20 +1860,26 @@ body.drawer-open .drawer-backdrop { display: block; }
   }
 
   async function selectAgent(id) {
+    const seq = ++state.switchSeq;
     try {
       closeEvents();
       state.historyLoadedFor = null;
-      const data = await api("/v1/agents/" + encodeURIComponent(id) + "/select", { method: "POST", body: "{}" });
-      state.primaryId = (data && data.primaryId) || id;
+      state.historyToken++;
       clearTranscript();
       endTurn();
-      await refreshAgents();
-      await refreshSession();
-      await refreshPermissions();
-      // Reopen SSE on the newly bound primary Hub (subscribers do not migrate on Bind).
-      openEvents();
+      setLoading(true);
       closeSessionsDrawer();
+      const data = await api("/v1/agents/" + encodeURIComponent(id) + "/select", { method: "POST", body: "{}" });
+      if (seq !== state.switchSeq) return;
+      state.primaryId = (data && data.primaryId) || id;
+      state.agents = normalizeAgents(state.agents, state.primaryId);
+      renderSessions();
+      // Reopen SSE on the newly bound primary Hub (subscribers do not migrate
+      // on Bind). Its first frame is the history; the rest load in parallel.
+      openEvents();
+      await Promise.all([refreshAgents(), refreshSession(), refreshPermissions()]);
     } catch (err) {
+      if (seq === state.switchSeq) setLoading(false);
       appendError(String(err.message || err));
     }
   }
@@ -1857,6 +1941,60 @@ body.drawer-open .drawer-backdrop { display: block; }
       await refreshSession();
     } catch (err) {
       setHint(String(err.message || err), true);
+    }
+  }
+
+  /* —— /resume: saved sessions of this workspace (same list as TUI /resume) —— */
+  async function openResumePicker() {
+    let data;
+    try {
+      data = await api("/v1/sessions");
+    } catch (err) {
+      setHint("resume: " + (err.message || err), true);
+      return;
+    }
+    const sessions = (data && data.sessions) || [];
+    const p = $("picker");
+    closeSlashMenu();
+    p.innerHTML = "";
+    if (p.children && p.children.length) p.children.length = 0;
+    p.dataset.kind = "resume";
+    p.appendChild(mk("div", "ptitle", "Resume session · " + (String((data && data.workspace) || "").split("/").pop() || "workspace")));
+    if (!sessions.length) p.appendChild(mk("div", "slash-empty", "no saved sessions for this workspace"));
+    const cur = state.session && state.session.id;
+    for (const it of sessions) {
+      const b = mk("button", it.id === cur ? "cur" : "");
+      b.type = "button";
+      b.setAttribute("role", "option");
+      b.dataset.value = it.id;
+      const l = mk("span", "", (it.running ? "● " : "○ ") + (it.summary || it.id));
+      const age = it.lastUserAt ? " · " + ageText(Date.now() - it.lastUserAt) : "";
+      l.appendChild(mk("span", "sub", "  " + it.id + age));
+      b.appendChild(l);
+      b.onclick = () => { closePicker(); resumeSession(it, data.workspace); };
+      p.appendChild(b);
+    }
+    p.hidden = false;
+  }
+  function ageText(ms) {
+    const m = Math.max(0, Math.round(ms / 60000));
+    if (m < 60) return m + "m ago";
+    if (m < 60 * 24) return Math.round(m / 60) + "h ago";
+    return Math.round(m / 1440) + "d ago";
+  }
+  async function resumeSession(it, workspace) {
+    if (state.session && it.id === state.session.id) return;
+    try {
+      // A saved session is opened by the daemon (the single owner); a running
+      // one is shared, so selecting it simply joins the same live stream.
+      if (!it.running) {
+        setLoading(true);
+        await api("/v1/agents", { method: "POST", body: JSON.stringify({ workspace: it.workspace || workspace, sessionId: it.id, resume: true }) });
+      }
+      await selectAgent(it.id);
+    } catch (err) {
+      setLoading(false);
+      appendError(String(err.message || err));
     }
   }
 
@@ -1987,8 +2125,7 @@ body.drawer-open .drawer-backdrop { display: block; }
       }
       const bound = newId ? true : await ensurePrimarySelected();
       if (bound) openEvents();
-      await refreshSession();
-      await refreshPermissions();
+      await Promise.all([refreshSession(), refreshPermissions()]);
       appendSystem("Created session `" + (newId || "") + "` in `" + workspace + "`");
       setHint("Session created.");
     } catch (err) {
@@ -2166,9 +2303,7 @@ body.drawer-open .drawer-backdrop { display: block; }
         await createSession();
         return true;
       case "resume":
-        if (isNarrow()) openSessionsDrawer();
-        await refreshAgents().catch(() => {});
-        setHint("Select a session from the list.");
+        await openResumePicker();
         return true;
       case "continue":
         try {

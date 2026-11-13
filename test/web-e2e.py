@@ -93,6 +93,13 @@ def scripted_turn(text):
     })
 
 
+def history_payload():
+    return {"id": state["primary"], "messages": [
+        {"role": "user", "text": "hello **history**"},
+        {"role": "assistant", "text": "restored *reply*"},
+    ], "tasks": []}
+
+
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -124,7 +131,7 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(404, {"error": "not found"})
         return p[len(PREFIX):] or "/"
 
-    def do_GET(self):
+    def do_GET(self):  # noqa: N802
         p = self.route()
         if p is None:
             return
@@ -146,10 +153,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/v1/models":
             return self.send_json(200, {"models": MODELS})
         if p == "/v1/history":
-            return self.send_json(200, {"id": state["primary"], "messages": [
-                {"role": "user", "text": "hello **history**"},
-                {"role": "assistant", "text": "restored *reply*"},
-            ], "tasks": []})
+            return self.send_json(200, history_payload())
         if p == "/v1/permissions":
             return self.send_json(200, [])
         if p == "/v1/fs":
@@ -167,6 +171,8 @@ class H(BaseHTTPRequestHandler):
                 subscribers.append(q)
             try:
                 self.wfile.write(b": ok\n\n")
+                # Desktop contract: subscribe, then send the snapshot first.
+                self.wfile.write(f"event: history\ndata: {json.dumps(history_payload())}\n\n".encode())
                 self.wfile.flush()
                 while True:
                     try:
@@ -239,13 +245,18 @@ def run(page, base, label, mobile, shots):
 
     check("history user bubble renders markdown", page.locator(".msg.user strong", has_text="history").count() == 1)
     check("history agent bubble renders markdown", page.locator(".msg.agent em", has_text="reply").count() == 1)
+    check("loading overlay hidden after history", page.locator("#loading").is_hidden())
+    sl = page.evaluate("""() => { const el = document.getElementById('statusLine');
+        const r = el.getBoundingClientRect(); const kids = [...el.children].map(c => c.getBoundingClientRect().top);
+        return { h: r.height, tops: new Set(kids.map(Math.round)).size, wrap: getComputedStyle(el).flexWrap }; }""")
+    check("status line stays one row", sl["h"] <= 24 and sl["tops"] <= 1 and sl["wrap"] == "nowrap", str(sl))
 
     # Chips + workflow around the composer.
     check("model chip", page.inner_text("#chipModelV") == "demo-pro")
     check("thinking chip defaults to lowest level like TUI", page.inner_text("#chipThinkingV") == "low", page.inner_text("#chipThinkingV"))
     check("flow chip", page.inner_text("#chipModeV") == "lite")
     check("workflow phase track", page.locator("#phaseTrack .phase.cur", has_text="synthesize").count() == 1
-          and page.locator("#phaseTrack .phase.done", has_text="define").count() == 1)
+          and page.locator('#phaseTrack .phase.done[title="define"]', has_text="✓def").count() == 1)
     page.click("#chipThinking")
     check("thinking picker lists levels", page.locator("#picker button").all_inner_texts() == ["low", "medium", "high"],
           page.locator("#picker button").all_inner_texts())

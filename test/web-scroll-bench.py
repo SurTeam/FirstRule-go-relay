@@ -55,6 +55,8 @@ def patched_get(self):
 
 
 e2e.H.do_GET = patched_get
+# The page now gets history as the first /v1/events frame.
+e2e.history_payload = lambda: {"id": e2e.state["primary"], "messages": HISTORY, "tasks": []}
 
 
 def stream_turn():
