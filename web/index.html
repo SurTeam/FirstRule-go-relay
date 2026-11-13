@@ -174,15 +174,30 @@ aside h2, .settings h2 {
   text-align: left;
   padding: 8px 10px;
   min-height: var(--touch);
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
   width: 100%;
 }
 .item.active { background: #1e2a3d; border-color: #2f5a8f; }
 .item:focus { outline: none; }
 .item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.item .main { min-width: 0; display: grid; gap: 2px; }
 .item .ws { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .id { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
 .item .sub { color: var(--muted); font-size: 12px; margin-top: 2px; display: flex; gap: 6px; align-items: center; }
+.item .close {
+  flex: none;
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 8px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.item .close:hover, .item .close:focus-visible { color: var(--danger); border-color: var(--border); background: var(--panel-2); }
 .side-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .side-actions button { flex: 1; }
 
@@ -376,7 +391,18 @@ aside h2, .settings h2 {
 }
 #transcript.loading { opacity: .55; transition: opacity .15s; }
 @keyframes spin { to { transform: rotate(360deg); } }
+#queue {
+  display: none;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 2px;
+}
+#queue.open { display: grid; }
+#queue .q-label { color: var(--dim); }
+#queue .q-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-row { display: flex; gap: 6px; align-items: flex-end; }
+#composer:disabled, #btnSend:disabled { opacity: .55; cursor: not-allowed; }
 #composer {
   flex: 1;
   min-height: 44px;
@@ -566,7 +592,6 @@ body.drawer-open .drawer-backdrop { display: block; }
       </div>
       <div class="side-actions">
         <button type="button" id="btnNew">＋ New</button>
-        <button type="button" id="btnStop" class="danger" disabled>Stop session</button>
       </div>
       <div id="sessions"><div class="dim">connect to load</div></div>
       <div class="row">
@@ -588,6 +613,7 @@ body.drawer-open .drawer-backdrop { display: block; }
           <span id="phaseTrack"></span>
           <span id="hint" class="dim grow">Open ⚙ settings to connect.</span>
         </div>
+        <div id="queue" aria-live="polite"></div>
         <div class="composer-row">
           <textarea id="composer" placeholder="Message FirstRule…  (/ commands · ⌘↩ send)" rows="1" disabled aria-autocomplete="list" aria-controls="slashMenu" aria-expanded="false"></textarea>
           <button type="button" id="btnStopTurn" class="danger" hidden aria-label="Interrupt">■</button>
@@ -915,9 +941,11 @@ body.drawer-open .drawer-backdrop { display: block; }
     turnStart: 0,
     activity: "",
     pendingUserText: "",
+    pendingQueue: [],
     pathMatches: [],
     pathCursor: 0,
     totals: { cost: 0, input: 0, output: 0, cacheRead: 0 },
+    agentsPoll: 0,
   };
 
   const SLASH_COMMANDS = [
@@ -938,7 +966,7 @@ body.drawer-open .drawer-backdrop { display: block; }
     { name: "compact", description: "summarize older context now" },
     { name: "status", description: "session and connection status" },
     { name: "pwd", description: "workspace and session id" },
-    { name: "stop", description: "stop the active session" },
+    { name: "close", description: "close (unload) the active session" },
   ];
 
   const narrowMq = window.matchMedia("(max-width: 899px)");
@@ -1383,20 +1411,58 @@ body.drawer-open .drawer-backdrop { display: block; }
     if (wf.complete) box.appendChild(mk("span", "phase done", "✓ done"));
   }
 
+  function hasBoundSession() {
+    return Boolean(state.connected && state.primaryId && state.session && state.session.id && state.session.id === state.primaryId);
+  }
+
+  function composerReady() {
+    return hasBoundSession() && !state.loading && !state.busy;
+  }
+
+  function syncComposerEnabled() {
+    const ready = composerReady();
+    $("composer").disabled = !ready;
+    $("btnSend").disabled = !ready;
+    $("btnNew").disabled = !state.connected;
+  }
+
   function updateSessionLabel() {
     const s = state.session;
-    if (!s) {
+    if (!hasBoundSession()) {
       $("sessionLabel").textContent = state.connected ? "no active session" : "not connected";
-      $("btnStop").disabled = true;
+      $("sessionLabel").title = "";
     } else {
       const ws = String(s.workspace || "").replace(/\/+$/, "").split("/").pop() || s.workspace || "";
       $("sessionLabel").textContent = (ws ? ws + " · " : "") + (s.id || "?");
       $("sessionLabel").title = (s.workspace || "") + " · " + (s.id || "");
-      $("btnStop").disabled = !state.connected || s.state === "stopped";
       if (s.busy && !state.turnActive) { beginTurn(); setActivity("running"); }
     }
     renderChips();
     paintActivity();
+    syncComposerEnabled();
+  }
+
+  function renderQueue() {
+    const box = $("queue");
+    const rows = state.pendingQueue || [];
+    box.innerHTML = "";
+    if (!rows.length) {
+      box.classList.remove("open");
+      return;
+    }
+    box.classList.add("open");
+    const label = mk("div", "q-label", "queued " + rows.length + " · Option+↑ edit");
+    box.appendChild(label);
+    const show = rows.slice(Math.max(0, rows.length - 2));
+    const start = rows.length - show.length;
+    show.forEach((text, i) => {
+      box.appendChild(mk("div", "q-item", (start + i + 1) + ". " + String(text || "").replace(/\n/g, " ⏎ ")));
+    });
+  }
+
+  function setPendingQueue(list) {
+    state.pendingQueue = Array.isArray(list) ? list.slice() : [];
+    renderQueue();
   }
 
   /* —— Agent event stream (same event names as the TUI Hub) —— */
@@ -1507,6 +1573,9 @@ body.drawer-open .drawer-backdrop { display: block; }
 
   async function api(path, opts = {}) {
     const headers = Object.assign({ "content-type": "application/json" }, opts.headers || {});
+    if (state.primaryId && !headers["X-FirstRule-Session"]) {
+      headers["X-FirstRule-Session"] = state.primaryId;
+    }
     const res = await fetch(state.base + path, Object.assign({}, opts, { headers }));
     const text = await res.text();
     let data = null;
@@ -1586,6 +1655,7 @@ body.drawer-open .drawer-backdrop { display: block; }
     const q = state.liveQueue || [];
     state.liveQueue = null;
     setLoading(false);
+    syncComposerEnabled();
     for (const [type, data] of q) handleAgentEvent(type, data);
   }
 
@@ -1650,34 +1720,66 @@ body.drawer-open .drawer-backdrop { display: block; }
     }
     for (const a of state.agents) {
       const selected = Boolean(a.selected || (a.id && a.id === state.primaryId));
-      const btn = mk("button", "item" + (selected ? " active" : ""));
-      btn.type = "button";
+      const row = mk("div", "item" + (selected ? " active" : ""));
+      const main = mk("button", "main");
+      main.type = "button";
       const ws = String(a.workspace || "").replace(/\/+$/, "");
-      btn.appendChild(mk("div", "ws", ws.split("/").pop() || ws || "(workspace)"));
-      btn.appendChild(mk("div", "id", a.id));
+      main.appendChild(mk("div", "ws", ws.split("/").pop() || ws || "(workspace)"));
+      main.appendChild(mk("div", "id", a.id));
       const sub = mk("div", "sub");
       const dot = mk("span", "dot " + (a.busy ? "busy" : a.state === "stopped" ? "bad" : "ok"));
       sub.appendChild(dot);
       sub.appendChild(mk("span", "", [a.busy ? "running" : a.state, a.model, a.mode && a.mode !== "off" ? "flow " + a.mode : "", selected ? "selected" : ""].filter(Boolean).join(" · ")));
-      btn.appendChild(sub);
-      btn.title = a.workspace || "";
-      btn.onclick = () => selectAgent(a.id);
-      box.appendChild(btn);
+      main.appendChild(sub);
+      main.title = a.workspace || "";
+      main.onclick = () => selectAgent(a.id);
+      const close = mk("button", "close", "×");
+      close.type = "button";
+      close.setAttribute("aria-label", "Close session");
+      close.title = "Close session";
+      close.onclick = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        closeSession(a.id);
+      };
+      row.appendChild(main);
+      row.appendChild(close);
+      box.appendChild(row);
     }
   }
 
-  async function refreshAgents() {
+async function refreshAgents(opts) {
+    const adoptPrimary = Boolean(opts && opts.adoptPrimary);
     const data = await api("/v1/agents");
-    state.primaryId = (data && data.primaryId) || "";
-    state.agents = normalizeAgents(data && data.agents, state.primaryId);
+    const listed = normalizeAgents(data && data.agents, (data && data.primaryId) || "");
+    const serverPrimary = (data && data.primaryId) || "";
+    // Keep the client's explicit binding. Never silently adopt another session
+    // just because the host fronted a newer create/stop elsewhere (including
+    // after the user closed the web binding and a TUI session became primary).
+    if (state.primaryId) {
+      if (!listed.some((a) => a.id === state.primaryId)) {
+        state.agents = listed;
+        renderSessions();
+        return data;
+      }
+      state.agents = normalizeAgents(listed, state.primaryId);
+    } else if (adoptPrimary && serverPrimary) {
+      state.primaryId = serverPrimary;
+      state.agents = normalizeAgents(listed, state.primaryId);
+    } else {
+      state.agents = normalizeAgents(listed, "");
+    }
     renderSessions();
     return data;
   }
 
-  async function ensurePrimarySelected() {
-    if (!state.agents.length) return false;
-    const want = state.primaryId || state.agents[0].id;
-    if (!want) return false;
+async function ensurePrimarySelected() {
+    // Never invent a binding from "first listed session". After close (or when
+    // another client created a session), the composer stays disabled until the
+    // user explicitly selects or creates one.
+    if (!state.agents.length || !state.primaryId) return false;
+    if (!state.agents.some((a) => a.id === state.primaryId)) return false;
+    const want = state.primaryId;
     // Always POST select so an unbound Bridge gets BindPrimary before session/send.
     const data = await api("/v1/agents/" + encodeURIComponent(want) + "/select", { method: "POST", body: "{}" });
     state.primaryId = (data && data.primaryId) || want;
@@ -1783,10 +1885,68 @@ body.drawer-open .drawer-backdrop { display: block; }
     $("btnDisconnect").disabled = !on;
     $("relayURL").disabled = on;
     $("token").disabled = on;
-    $("composer").disabled = !on;
-    $("btnSend").disabled = !on;
-    $("btnNew").disabled = !on;
-    $("btnStop").disabled = !on || !state.session || state.session.state === "stopped";
+    syncComposerEnabled();
+  }
+
+  function clearBoundSessionView(reason) {
+    closeEvents();
+    state.historyLoadedFor = null;
+    state.historyToken++;
+    state.session = null;
+    state.primaryId = "";
+    state.pendingUserText = "";
+    setPendingQueue([]);
+    endTurn();
+    clearTranscript();
+    setLoading(false);
+    if (reason) appendSystem(reason);
+    updateSessionLabel();
+  }
+
+  async function refreshQueue() {
+    if (!hasBoundSession()) {
+      setPendingQueue([]);
+      return;
+    }
+    try {
+      const data = await api("/v1/queue");
+      setPendingQueue((data && data.pending) || []);
+    } catch (err) {
+      if (err && err.status === 503) setPendingQueue([]);
+      else throw err;
+    }
+  }
+
+function startAgentsPoll() {
+    stopAgentsPoll();
+    const tick = () => {
+      if (!state.connected) return;
+      // Pause while the tab is hidden to avoid burning battery on idle polls.
+      if (typeof document !== "undefined" && document.hidden) return;
+      const boundBefore = state.primaryId;
+      refreshAgents()
+        .then(() => {
+          if (boundBefore && !state.agents.some((a) => a.id === boundBefore)) {
+            clearBoundSessionView("Selected session was closed. Open or create a session before sending.");
+            setHint("No active session — use ＋ New or /resume.", true);
+            setStatus(false, "waiting for session");
+            return;
+          }
+          // A session opened elsewhere should appear in the sidebar without
+          // hijacking the composer binding.
+          syncComposerEnabled();
+        })
+        .catch(() => {});
+    };
+    state.agentsPoll = setInterval(tick, 2500);
+    tick();
+  }
+
+  function stopAgentsPoll() {
+    if (state.agentsPoll) {
+      clearInterval(state.agentsPoll);
+      state.agentsPoll = 0;
+    }
   }
 
   async function connect() {
@@ -1814,21 +1974,29 @@ body.drawer-open .drawer-backdrop { display: block; }
     try {
       const hz = await fetch(state.base + "/healthz");
       if (!hz.ok) throw new Error("healthz " + hz.status);
-      setConnected(true);
+setConnected(true);
       closeSettings();
       clearTranscript();
-      await refreshAgents();
+      // Only the initial connect may adopt a binding. Later polls/refreshes
+      // never invent one after close or while another client creates.
+      await refreshAgents({ adoptPrimary: true });
+      if (!state.primaryId && state.agents.length && state.agents[0].id) {
+        state.primaryId = state.agents[0].id;
+      }
       const bound = await ensurePrimarySelected();
       if (!bound) {
-        appendSystem("No running sessions on the desktop. Create one with ＋ New, or start one in the daemon and refresh.");
+        clearBoundSessionView("No running sessions on the desktop. Create one with ＋ New, or start one in the daemon and refresh.");
         setHint("Connected, but no session yet.");
+        setStatus(false, "waiting for session");
+      } else {
+        // Subscribe only after BindPrimary: /v1/events snapshots the hub at open time.
+        openEvents();
+        await Promise.all([refreshModels(), refreshSession(), refreshPermissions(), refreshQueue()]);
+        if (!isNarrow()) $("composer").focus();
+        setHint("Connected. Type / for commands.");
       }
-      // Subscribe only after BindPrimary: /v1/events snapshots the hub at open time.
-      if (bound) openEvents();
-      else setStatus(false, "waiting for session");
-      await Promise.all([refreshModels(), refreshSession(), refreshPermissions()]);
-      if (!isNarrow()) $("composer").focus();
-      if (bound) setHint("Connected. Type / for commands.");
+      startAgentsPoll();
+      if (!bound) await refreshModels().catch(() => {});
     } catch (err) {
       setConnected(false);
       setStatus(false, "offline");
@@ -1839,6 +2007,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   }
 
   function disconnect() {
+    stopAgentsPoll();
     closeEvents();
     closeSlashMenu();
     closePicker();
@@ -1852,6 +2021,7 @@ body.drawer-open .drawer-backdrop { display: block; }
     state.primaryId = "";
     state.pendingUserText = "";
     state.historyLoadedFor = null;
+    setPendingQueue([]);
     updateSessionLabel();
     $("sessions").innerHTML = "<div class=\"dim\">connect to load</div>";
     $("permissions").innerHTML = "<div class=\"dim\">none pending</div>";
@@ -1867,7 +2037,9 @@ body.drawer-open .drawer-backdrop { display: block; }
       state.historyToken++;
       clearTranscript();
       endTurn();
+      setPendingQueue([]);
       setLoading(true);
+      syncComposerEnabled();
       closeSessionsDrawer();
       const data = await api("/v1/agents/" + encodeURIComponent(id) + "/select", { method: "POST", body: "{}" });
       if (seq !== state.switchSeq) return;
@@ -1877,9 +2049,14 @@ body.drawer-open .drawer-backdrop { display: block; }
       // Reopen SSE on the newly bound primary Hub (subscribers do not migrate
       // on Bind). Its first frame is the history; the rest load in parallel.
       openEvents();
-      await Promise.all([refreshAgents(), refreshSession(), refreshPermissions()]);
+      await Promise.all([refreshAgents(), refreshSession(), refreshPermissions(), refreshQueue()]);
+      if (seq === state.switchSeq) syncComposerEnabled();
     } catch (err) {
-      if (seq === state.switchSeq) setLoading(false);
+      if (seq === state.switchSeq) {
+        setLoading(false);
+        clearBoundSessionView("Could not switch session: " + String(err.message || err));
+        setHint("Session switch failed", true);
+      }
       appendError(String(err.message || err));
     }
   }
@@ -2125,8 +2302,9 @@ body.drawer-open .drawer-backdrop { display: block; }
       }
       const bound = newId ? true : await ensurePrimarySelected();
       if (bound) openEvents();
-      await Promise.all([refreshSession(), refreshPermissions()]);
+      await Promise.all([refreshSession(), refreshPermissions(), refreshQueue()]);
       appendSystem("Created session `" + (newId || "") + "` in `" + workspace + "`");
+      syncComposerEnabled();
       setHint("Session created.");
     } catch (err) {
       $("createHint").textContent = String(err.message || err);
@@ -2136,13 +2314,48 @@ body.drawer-open .drawer-backdrop { display: block; }
     }
   }
 
-  async function stopSession() {
+  async function closeSession(id) {
+    const target = id || state.primaryId || (state.session && state.session.id);
+    if (!target) {
+      appendError("no session to close");
+      return;
+    }
+    const closingCurrent = target === state.primaryId || (state.session && target === state.session.id);
     try {
-      await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "stop" }) });
-      await refreshSession();
+      if (closingCurrent) {
+        setLoading(true);
+        syncComposerEnabled();
+      }
+      await api("/v1/agents/" + encodeURIComponent(target), { method: "DELETE", body: "{}" });
       await refreshAgents();
+      if (closingCurrent) {
+        // Never auto-bind another running session after close: the main pane
+        // must stay empty until the user explicitly opens one.
+        clearBoundSessionView("Session closed. Open or create a session before sending.");
+        setHint("No active session — use ＋ New or /resume.", true);
+        setStatus(false, "waiting for session");
+      } else {
+        syncComposerEnabled();
+      }
     } catch (err) {
+      setLoading(false);
       appendError(String(err.message || err));
+      syncComposerEnabled();
+    }
+  }
+
+  async function interruptTurn() {
+    if (!hasBoundSession()) {
+      appendError("no active session");
+      return;
+    }
+    try {
+      await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "abort" }) });
+      setActivity("interrupted — /continue to resume");
+      setHint("Turn interrupted. /continue retries with the selected model and queue.");
+      await refreshSession().catch(() => {});
+    } catch (err) {
+      appendError("interrupt: " + String(err.message || err));
     }
   }
 
@@ -2155,32 +2368,72 @@ body.drawer-open .drawer-backdrop { display: block; }
 
   async function send() {
     const text = $("composer").value.trim();
-    if (!text || state.busy) return;
+    if (!text || state.busy || state.loading) return;
     closePicker();
     if (text.startsWith("/")) {
       const handled = await runSlashCommand(text);
       if (handled) { $("composer").value = ""; autosize(); closeSlashMenu(); return; }
     }
+    if (!hasBoundSession()) {
+      appendError("no active session — open or create one before sending");
+      setHint("No active session", true);
+      return;
+    }
+    const boundId = state.primaryId;
     state.busy = true;
-    $("btnSend").disabled = true;
+    syncComposerEnabled();
     $("composer").value = "";
     autosize();
     closeSlashMenu();
-    // Optimistic user bubble; SSE user_message dedupes via pendingUserText.
-    state.pendingUserText = text;
-    appendUser(text);
-    beginTurn();
-    setActivity("waiting for response");
+    const queuedWhileBusy = state.turnActive || (state.session && state.session.busy);
+    if (queuedWhileBusy) {
+      setPendingQueue(state.pendingQueue.concat([text]));
+      setHint("Queued behind the running turn · Option+↑ edit");
+    } else {
+      // Optimistic user bubble; SSE user_message dedupes via pendingUserText.
+      state.pendingUserText = text;
+      appendUser(text);
+      beginTurn();
+      setActivity("waiting for response");
+    }
     try {
-      await api("/v1/messages", { method: "POST", body: JSON.stringify({ text }) });
+      const data = await api("/v1/messages", { method: "POST", body: JSON.stringify({ text }) });
+      if (boundId !== state.primaryId) {
+        appendError("send ignored: session changed while waiting for the server");
+        return;
+      }
+      if (data && Array.isArray(data.pending)) setPendingQueue(data.pending);
+      else if (data && data.queued) await refreshQueue().catch(() => {});
       await refreshSession().catch(() => {});
     } catch (err) {
-      state.pendingUserText = "";
-      endTurn();
+      if (!queuedWhileBusy) {
+        state.pendingUserText = "";
+        endTurn();
+      } else {
+        setPendingQueue(state.pendingQueue.filter((q) => q !== text));
+      }
       appendError("send: " + String(err.message || err));
+      if (err && err.status === 503) {
+        clearBoundSessionView("Session is no longer bound. Open or create a session before sending.");
+      }
     } finally {
       state.busy = false;
-      $("btnSend").disabled = !state.connected;
+      syncComposerEnabled();
+    }
+  }
+
+  async function recallQueuedMessage() {
+    if (!hasBoundSession() || $("composer").value.trim() !== "") return;
+    try {
+      const data = await api("/v1/queue", { method: "DELETE", body: "{}" });
+      if (data && Array.isArray(data.pending)) setPendingQueue(data.pending);
+      if (!(data && data.ok)) return;
+      $("composer").value = data.text || "";
+      autosize();
+      updateSlashFromComposer();
+      $("composer").focus();
+    } catch (err) {
+      appendError("queue recall: " + String(err.message || err));
     }
   }
 
@@ -2434,8 +2687,9 @@ body.drawer-open .drawer-backdrop { display: block; }
         appendSystem("workspace: `" + ((s && s.workspace) || "(none)") + "`  (session `" + ((s && s.id) || "none") + "`)");
         return true;
       }
+      case "close":
       case "stop":
-        await stopSession();
+        await closeSession();
         return true;
       default:
         return false;
@@ -2449,7 +2703,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   $("btnSettingsClose").onclick = closeSettings;
   $("settingsDialog").addEventListener("click", (ev) => { if (ev.target === $("settingsDialog")) closeSettings(); });
   $("btnSend").onclick = send;
-  $("btnStopTurn").onclick = () => runSlashCommand("/stop");
+  $("btnStopTurn").onclick = () => { interruptTurn().catch(appendErrorFromPromise); };
   $("btnNew").onclick = createSession;
   $("btnCreateCancel").onclick = closeCreateDialog;
   $("btnCreateConfirm").onclick = confirmCreateSession;
@@ -2466,7 +2720,6 @@ body.drawer-open .drawer-backdrop { display: block; }
   });
   $("createDialog").addEventListener("click", (ev) => { if (ev.target === $("createDialog")) closeCreateDialog(); });
 
-  $("btnStop").onclick = stopSession;
   $("btnRefresh").onclick = () => {
     refreshAgents()
       .then(() => ensurePrimarySelected())
@@ -2497,6 +2750,13 @@ body.drawer-open .drawer-backdrop { display: block; }
   transcript().addEventListener("scroll", onTranscriptScroll, { passive: true });
   $("composer").addEventListener("input", () => { autosize(); updateSlashFromComposer(); });
   $("composer").addEventListener("keydown", (ev) => {
+    if ((ev.key === "ArrowUp" || ev.key === "Up") && (ev.altKey || ev.metaKey) && !ev.shiftKey && !ev.ctrlKey) {
+      if ($("composer").value === "" && (state.pendingQueue || []).length) {
+        ev.preventDefault();
+        recallQueuedMessage().catch(appendErrorFromPromise);
+        return;
+      }
+    }
     const menuOpen = $("slashMenu").getAttribute("aria-hidden") === "false";
     if (menuOpen && state.slashMatches.length) {
       if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {

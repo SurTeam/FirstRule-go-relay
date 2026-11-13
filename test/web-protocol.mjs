@@ -115,6 +115,13 @@ const server = createServer((req, res) => {
     primaryId = id;
     return sendJSON(200, { ok: true, primaryId });
   }
+  if (pathname.startsWith('/v1/agents/') && req.method === 'DELETE') {
+    const id = decodeURIComponent(pathname.slice('/v1/agents/'.length).replace(/\/$/, ''));
+    posted.closes = posted.closes || [];
+    posted.closes.push(id);
+    if (primaryId === id) primaryId = '';
+    return sendJSON(200, { ok: true, id, action: 'close', primaryId });
+  }
   if (pathname === '/v1/session' && req.method === 'GET') {
     if (!primaryId) return sendJSON(503, { error: 'no primary agent' });
     const created = posted.creates.find((c) => c.id === primaryId);
@@ -136,6 +143,9 @@ const server = createServer((req, res) => {
       if (body.action === 'stop') {
         primaryId = '';
         return sendJSON(200, { ok: true, action: 'stop' });
+      }
+      if (body.action === 'abort') {
+        return sendJSON(200, { ok: true, action: 'abort' });
       }
       if (body.action === 'continue' || body.action === 'compact') {
         return sendJSON(202, { ok: true, action: body.action, message: 'ok' });
@@ -202,18 +212,36 @@ if (pathname === '/v1/history' && req.method === 'GET') {
     });
     return;
   }
+  if (pathname === '/v1/queue' && req.method === 'GET') {
+    if (!primaryId) return sendJSON(503, { error: 'no primary agent' });
+    return sendJSON(200, { pending: posted.queue || [] });
+  }
+  if (pathname === '/v1/queue' && req.method === 'DELETE') {
+    if (!primaryId) return sendJSON(503, { error: 'no primary agent' });
+    const q = posted.queue || [];
+    if (!q.length) return sendJSON(200, { ok: false, text: '', pending: [] });
+    const text = q.pop();
+    posted.queue = q;
+    return sendJSON(200, { ok: true, text, pending: q.slice() });
+  }
   if (pathname === '/v1/messages' && req.method === 'POST') {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
       posted.messages.push(body);
-      sendJSON(202, { ok: true });
+      if (posted.busy) {
+        posted.queue = (posted.queue || []).concat([body.text]);
+        return sendJSON(202, { ok: true, queued: true, pending: posted.queue.slice() });
+      }
+      posted.busy = true;
+      sendJSON(202, { ok: true, queued: false, pending: [] });
       setTimeout(() => {
         broadcast('user_message', { type: 'user_message', text: body.text });
         broadcast('text_delta', { type: 'text_delta', text: 'pong:' });
         broadcast('text_delta', { type: 'text_delta', text: body.text });
         broadcast('turn_done', { type: 'turn_done', turn: 'pong:' + body.text });
+        posted.busy = false;
       }, 20);
     });
     return;
@@ -359,12 +387,12 @@ function buildDOM() {
   const ids = [
     'statusDot', 'statusText', 'token', 'relayURL', 'btnConnect', 'btnDisconnect',
     'btnSessions', 'btnCloseSessions', 'drawerBackdrop', 'sidebar', 'chat',
-    'sessionLabel', 'btnNew', 'btnStop', 'btnRefresh', 'transcript', 'composer',
+    'sessionLabel', 'btnNew', 'btnRefresh', 'transcript', 'composer',
     'hint', 'btnSend', 'sessions', 'permissions', 'btnRefreshAgents', 'btnRefreshPerms',
     'slashMenu', 'createDialog', 'createTitle', 'createWorkspace', 'pathMenu',
     'createModel', 'createMode', 'createHint', 'btnCreateCancel', 'btnCreateConfirm',
     'btnSettings', 'btnSettingsClose', 'settingsDialog', 'settingsHint', 'autoConnect',
-    'btnStopTurn', 'picker', 'statusLine', 'activity', 'phaseTrack', 'chips',
+    'btnStopTurn', 'picker', 'statusLine', 'activity', 'phaseTrack', 'chips', 'queue',
     'loading', 'chipModel', 'chipModelV', 'chipThinking', 'chipThinkingV', 'chipMode', 'chipModeV', 'chipUsage', 'chipUsageV',
   ];
   for (const id of ids) {
@@ -459,8 +487,9 @@ check('connect succeeds', $('hint').textContent.includes('Connected') || $('stat
 check('auto-select primary before session', posted.selects[0] === 'sess-1' && primaryId === 'sess-1', JSON.stringify(posted.selects) + ' primary=' + primaryId);
 {
   const active = $('sessions').children.find((c) => String(c.className || '').includes('active'));
-  const idText = active && active.children.find((c) => c.className === 'id');
-  check('selected marker from primaryId', Boolean(active && idText && idText.textContent === 'sess-1'), 'active=' + (active && active.className));
+  const main = active && active.children && active.children[0];
+  const idText = main && main.children && main.children.find((c) => c.className === 'id');
+  check('selected marker from primaryId', Boolean(active && idText && idText.textContent === 'sess-1'), 'active=' + (active && active.className) + ' id=' + (idText && idText.textContent));
 }
 check('history restored user+assistant', /user\|You\|hello history/.test(transcriptText()) && /agent\|FirstRule\|hi from history/.test(transcriptText()), transcriptText());
 check('history restored tool card', /tool\|\|Bash/.test(transcriptText()) && transcriptText().includes('↳ 1 line returned'), transcriptText());
@@ -563,6 +592,9 @@ await sleep(40);
 check('slash /revoke works', posted.delegates.some((d) => d.action === 'revoke' && d.taskId === 'child' && d.capability === 'shell'));
 
 check('slash omits daemon/exit', !/name:\s*"daemon"/.test(script) && !/name:\s*"exit"/.test(script));
+check('slash close replaces stop', /name:\s*"close"/.test(script) && !HTML.includes('Stop session'));
+check('interrupt uses abort not stop', /action:\s*\"abort\"/.test(script) && /btnStopTurn[\s\S]{0,120}interruptTurn/.test(script));
+check('queue + Option↑ recall markers', script.includes('/v1/queue') && /Alt|altKey|metaKey/.test(script) && HTML.includes('id="queue"'));
 check('slash prefix filter retained', /filterSlash[\s\S]{0,200}startsWith\(prefix\)/.test(script) && /updateSlashFromComposer[\s\S]{0,300}filterSlash\(prefix\)/.test(script));
 
 // Create dialog path completion + confirm
@@ -627,6 +659,48 @@ await sleep(500);
   check('duplicate tool_done renders once', tools === 1, String(tools));
 }
 bigHistory.on = false;
+
+// Interrupt aborts the turn without unloading the primary.
+await selectViaSessions('sess-1');
+await sleep(120);
+$('btnStopTurn').hidden = false;
+await $('btnStopTurn').onclick();
+await sleep(40);
+check('interrupt posts abort', posted.sessions.some((s) => s.action === 'abort'), JSON.stringify(posted.sessions.slice(-3)));
+check('interrupt keeps primary bound', primaryId === 'sess-1', primaryId);
+
+// Close session clears the bound view and disables the composer.
+{
+  const closeBtn = $('sessions').children
+    .map((row) => row.children.find((c) => c.className === 'close'))
+    .find(Boolean);
+  check('session row has close control', Boolean(closeBtn));
+  if (closeBtn) {
+    await closeBtn.onclick({ preventDefault() {}, stopPropagation() {} });
+    await sleep(80);
+  }
+  check('close unloads primary', Array.isArray(posted.closes) && posted.closes.length > 0 && primaryId === '', JSON.stringify(posted.closes) + ' primary=' + primaryId);
+  check('composer disabled without session', $('composer').disabled === true);
+
+  // After close, a later refresh must not invent a binding even though other
+  // sessions remain listed (mock still exposes sess-1 / creates).
+  const selectsBeforeRefresh = posted.selects.length;
+  await $('btnRefreshAgents').onclick();
+  await sleep(80);
+  check('refresh after close keeps unbound', primaryId === '' && posted.selects.length === selectsBeforeRefresh, 'primary=' + primaryId + ' selects=' + JSON.stringify(posted.selects));
+  check('refresh after close keeps composer disabled', Boolean($('composer').disabled), 'disabled=' + $('composer').disabled);
+  check('closed session prompts reopen', transcriptText().includes('Session closed') || ($('hint').textContent || '').includes('No active session'), $('hint').textContent);
+}
+
+async function selectViaSessions(id) {
+  const row = $('sessions').children.find((c) => {
+    const main = c.children && c.children[0];
+    const idEl = main && main.children && main.children.find((x) => x.className === 'id');
+    return idEl && idEl.textContent === id;
+  });
+  if (!row) throw new Error('missing session row ' + id);
+  await row.children[0].onclick();
+}
 
 server.close();
 console.log(`\nweb-protocol: ${failures ? failures + ' failed' : 'all passed'}`);
