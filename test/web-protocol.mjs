@@ -298,6 +298,7 @@ function buildDOM() {
       getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null; },
       removeAttribute(k) { delete this.attributes[k]; },
       appendChild(child) { child.parent = this; this.children.push(child); return child; },
+      removeChild(child) { this.children = this.children.filter((c) => c !== child); return child; },
       querySelector(sel) {
         if (sel === '.body') return this.children.find((c) => c.className === 'body') || null;
         if (sel === '.meta') return this.children.find((c) => c.className === 'meta') || null;
@@ -331,6 +332,9 @@ function buildDOM() {
     'hint', 'btnSend', 'sessions', 'permissions', 'btnRefreshAgents', 'btnRefreshPerms',
     'slashMenu', 'createDialog', 'createTitle', 'createWorkspace', 'pathMenu',
     'createModel', 'createMode', 'createHint', 'btnCreateCancel', 'btnCreateConfirm',
+    'btnSettings', 'btnSettingsClose', 'settingsDialog', 'settingsHint', 'autoConnect',
+    'btnStopTurn', 'picker', 'statusLine', 'activity', 'phaseTrack', 'chips',
+    'chipModel', 'chipModelV', 'chipThinking', 'chipThinkingV', 'chipMode', 'chipModeV', 'chipUsage', 'chipUsageV',
   ];
   for (const id of ids) {
     const tag = id.startsWith('btn') || id === 'drawerBackdrop' ? 'button'
@@ -341,6 +345,8 @@ function buildDOM() {
     byId.set(id, makeEl(tag));
   }
   byId.get('createDialog').hidden = true;
+  byId.get('settingsDialog').hidden = true;
+  byId.get('picker').hidden = true;
   byId.get('createModel').innerHTML = '<option value="">default</option><option value="demo">demo</option>';
   byId.get('createMode').innerHTML = '<option value="off">off</option><option value="lite">lite</option>';
 byId.get('relayURL').value = origin;
@@ -395,6 +401,8 @@ const context = {
   URLSearchParams,
   setTimeout,
   clearTimeout,
+  setInterval,
+  clearInterval,
   console,
 };
 context.window = context;
@@ -409,9 +417,8 @@ await $('btnConnect').onclick();
 await sleep(250);
 
 const transcriptText = () => $('transcript').children.map((c) => {
-  const meta = (c.children.find((x) => x.className === 'meta') || {}).textContent || '';
-  const body = (c.children.find((x) => x.className === 'body') || {}).textContent || '';
-  return `${c.className}|${meta}|${body}`;
+  const meta = (c._meta && c._meta.textContent) || '';
+  return `${c.dataset.kind}|${meta}|${c.dataset.text || ''}`;
 }).join('\n');
 
 check('connect succeeds', $('hint').textContent.includes('Connected') || $('statusText').textContent === 'live', $('hint').textContent + ' / ' + $('statusText').textContent);
@@ -421,24 +428,25 @@ check('auto-select primary before session', posted.selects[0] === 'sess-1' && pr
   const idText = active && active.children.find((c) => c.className === 'id');
   check('selected marker from primaryId', Boolean(active && idText && idText.textContent === 'sess-1'), 'active=' + (active && active.className));
 }
-check('history restored user+assistant', /user\|.*hello history/.test(transcriptText()) && /assistant\|.*hi from history/.test(transcriptText()), transcriptText());
-check('history restored tool card', /tool\|/.test(transcriptText()) && transcriptText().includes('ok'), transcriptText());
+check('history restored user+assistant', /user\|You\|hello history/.test(transcriptText()) && /agent\|FirstRule\|hi from history/.test(transcriptText()), transcriptText());
+check('history restored tool card', /tool\|\|Bash/.test(transcriptText()) && transcriptText().includes('↳ 1 line returned'), transcriptText());
 
 const ping = 'ping-e2e';
 $('composer').value = ping;
 const sendPromise = $('btnSend').onclick();
 await sleep(30);
-check('optimistic user card before/without waiting for SSE', transcriptText().includes('user|user|' + ping), transcriptText());
+check('optimistic user card before/without waiting for SSE', transcriptText().includes('user|You|' + ping), transcriptText());
 await sendPromise;
 await sleep(250);
 check('POST /v1/messages body', posted.messages.length === 1 && posted.messages[0].text === ping);
-const userCards = transcriptText().split('\n').filter((l) => l.includes('user|user|' + ping));
+const userCards = transcriptText().split('\n').filter((l) => l.includes('user|You|' + ping));
 check('user card not duplicated after SSE user_message', userCards.length === 1, transcriptText());
 check(
   'SSE text_delta streamed',
   transcriptText().includes('pong:' + ping) || /agent\|.*pong:/.test(transcriptText()) || /assistant\|.*pong:/.test(transcriptText()),
   transcriptText(),
 );
+check('turn_done renders Summary, not agent text', /summary\|\|Summary · /.test(transcriptText()) && !/system\|[^\n]*pong:/.test(transcriptText()), transcriptText());
 check(
   'connect/select reopen SSE after bind',
   /ensurePrimarySelected\(\)[\s\S]{0,400}if \(bound\) openEvents\(\)/.test(script)
@@ -507,6 +515,8 @@ $('composer').value = '/agents';
 await $('btnSend').onclick();
 await sleep(40);
 check('slash /agents works', transcriptText().includes('waiting_permission') || transcriptText().includes('child'));
+check('slash /agents renders table not JSON', /\| `child` \| waiting_permission/.test(transcriptText()) && !transcriptText().includes('"status"'), transcriptText());
+
 
 $('composer').value = '/approve 7';
 await $('btnSend').onclick();

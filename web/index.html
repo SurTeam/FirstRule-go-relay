@@ -2,8 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>FirstRule Relay</title>
+<!-- maximum-scale=1 + 16px form controls: iOS must not zoom the page on input focus. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+<meta name="theme-color" content="#0b0d10" />
+<title>FirstRule</title>
 <style>
 :root {
   color-scheme: dark;
@@ -13,19 +15,33 @@
   --border: #273041;
   --text: #e7eef9;
   --muted: #93a0b4;
+  --dim: #8a8a8a;
   --accent: #6ea8fe;
   --ok: #3dd68c;
   --warn: #f5a524;
   --danger: #f87171;
+  --err-text: #d7af5f;      /* TUI Color179 */
+  --user-bubble: #1d3557;
+  --user-border: #2f5a8f;
+  --agent-bubble: #151b23;
+  --agent-border: #24414f;
+  --tool-bg: #11151b;
+  --think: #949494;         /* TUI Color246 */
+  --md-bold: #eeeeee;       /* 38;5;255 */
+  --md-italic: #bcbcbc;     /* 38;5;250 */
+  --md-strike: #8a8a8a;     /* 38;5;245 */
+  --md-code: #ffd787;       /* 38;5;222 */
+  --md-heading: #87d7ff;    /* 38;5;117 */
+  --md-link: #00afff;       /* 38;5;39 */
+  --code-bg: #272822;       /* chroma monokai */
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-r: env(safe-area-inset-right, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-l: env(safe-area-inset-left, 0px);
-  --touch: 44px;
+  --touch: 40px;
   --drawer-width: min(20rem, calc(100vw - 2.5rem));
-  --header-h: auto;
 }
 * { box-sizing: border-box; }
 html, body {
@@ -36,18 +52,22 @@ html, body {
   overscroll-behavior: none;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.45 var(--sans);
+  font: 14px/1.5 var(--sans);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 body { position: relative; }
 button, input, textarea, select {
   font: inherit;
+  font-size: 16px; /* < 16px makes iOS Safari zoom on focus */
   color: inherit;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 8px 10px;
+  padding: 6px 10px;
 }
 button {
+  font-size: 14px;
   cursor: pointer;
   min-height: var(--touch);
   min-width: var(--touch);
@@ -55,64 +75,63 @@ button {
 }
 button.primary { background: #1d4ed8; border-color: #1d4ed8; }
 button.danger { background: #7f1d1d; border-color: #7f1d1d; }
-button.ghost { background: transparent; }
+button.ghost { background: transparent; border-color: transparent; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 input, textarea, select { min-height: var(--touch); }
+[hidden] { display: none !important; }
+.dim { color: var(--muted); }
+.err { color: var(--danger); }
+.grow { flex: 1; min-width: 0; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row > * { flex: none; }
+.row > .grow { flex: 1; }
+
 #app {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   height: 100dvh;
-  max-height: 100%;
-  max-height: 100dvh;
   max-width: 1400px;
   margin: 0 auto;
-  padding:
-    max(8px, var(--safe-t))
-    max(8px, var(--safe-r))
-    max(8px, var(--safe-b))
-    max(8px, var(--safe-l));
-  gap: 8px;
+  padding: max(6px, var(--safe-t)) max(6px, var(--safe-r)) 0 max(6px, var(--safe-l));
+  gap: 6px;
   overflow: hidden;
   min-height: 0;
 }
+/* Thin top bar: drawer toggle, title, connection pill, settings. */
 header {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  min-width: 0;
+  padding: 2px 4px;
 }
-.brand { display: flex; gap: 10px; align-items: center; min-width: 0; }
-.brand h1 { margin: 0; font-size: 15px; white-space: nowrap; }
+header .title { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+header h1 { margin: 0; font-size: 15px; white-space: nowrap; }
+#sessionLabel {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  padding: 3px 8px;
   border-radius: 999px;
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--muted);
   font-size: 12px;
+  white-space: nowrap;
 }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; display: inline-block; }
 .dot.ok { background: var(--ok); }
 .dot.bad { background: var(--danger); }
-.token-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex: 1 1 280px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-.token-row input { flex: 1 1 140px; min-width: 0; }
-#relayURL { flex: 1.4 1 180px; }
+.dot.busy { background: var(--accent); }
+
 #main {
   display: grid;
   grid-template-columns: 1fr;
@@ -131,11 +150,9 @@ aside, section {
   display: flex;
   flex-direction: column;
 }
-aside {
-  padding: 10px;
-  gap: 8px;
-}
-aside h2, .meta h2 {
+section#chat { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: 0; }
+aside { padding: 10px; gap: 8px; }
+aside h2, .settings h2 {
   margin: 0;
   font-size: 12px;
   text-transform: uppercase;
@@ -151,95 +168,241 @@ aside h2, .meta h2 {
 }
 .item {
   text-align: left;
-  padding: 10px;
+  padding: 8px 10px;
   min-height: var(--touch);
+  display: block;
+  width: 100%;
 }
-.item.active { outline: 1px solid var(--accent); }
-.item .id { font-family: var(--mono); font-size: 12px; word-break: break-all; }
-.item .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.item.active { outline: 1px solid var(--accent); background: #1a2433; }
+.item .ws { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .id { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
+.item .sub { color: var(--muted); font-size: 12px; margin-top: 2px; display: flex; gap: 6px; align-items: center; }
+.side-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.side-actions button { flex: 1; }
+
 #chat {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
-  overflow: hidden;
 }
-.meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-}
-.meta-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 #transcript {
   overflow: auto;
   min-height: 0;
-  padding: 10px;
+  padding: 12px 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+  will-change: scroll-position;
+  overflow-anchor: none;
 }
-.msg {
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  border-radius: 10px;
-  padding: 8px 10px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.msg .role {
-  font-size: 11px;
-  color: var(--muted);
-  margin-bottom: 4px;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-}
-.msg.user { border-color: #335; }
-.msg.assistant, .msg.agent { border-color: #245; }
-.msg.system { border-color: #443; color: #d7c79a; }
-.msg.tool { border-color: #345; font-family: var(--mono); font-size: 12px; }
-.msg.think, .msg.thinking { border-color: #364; color: #9fd6b5; font-style: italic; }
+/* —— Transcript cards (see docs/subsystems/web-client.md) —— */
+.msg { max-width: 100%; word-break: break-word; overflow-wrap: anywhere; }
 .msg .meta {
   font-size: 11px;
   color: var(--muted);
-  margin-bottom: 4px;
-  text-transform: uppercase;
-  letter-spacing: .04em;
+  margin-bottom: 3px;
+  letter-spacing: .03em;
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
-.msg .body { white-space: pre-wrap; word-break: break-word; }
+.msg .body { white-space: pre-wrap; }
+.msg .body.md { white-space: normal; }
+/* User: right-aligned bubble ("You"). */
+.msg.user { align-self: flex-end; max-width: min(85%, 720px); }
+.msg.user .meta { justify-content: flex-end; color: #87afff; }
+.msg.user .body {
+  background: var(--user-bubble);
+  border: 1px solid var(--user-border);
+  border-radius: 14px 14px 4px 14px;
+  padding: 8px 12px;
+}
+/* Agent: left bubble titled "FirstRule". */
+.msg.agent { align-self: flex-start; max-width: min(100%, 860px); width: fit-content; min-width: 40%; }
+.msg.agent .meta { color: #00d787; }
+.msg.agent .body {
+  background: var(--agent-bubble);
+  border: 1px solid var(--agent-border);
+  border-radius: 14px 14px 14px 4px;
+  padding: 8px 12px;
+}
+/* System / thinking / tool / error: full-width compact rows. */
+.msg.system .body, .msg.error .body {
+  border-left: 2px solid #00d787;
+  padding: 2px 10px;
+  color: #d0d0d0;
+}
+.msg.system .meta, .msg.think .meta, .msg.tool .head { cursor: pointer; user-select: none; }
+.msg.error .meta { color: var(--err-text); }
+.msg.error .body { border-left-color: var(--err-text); color: var(--err-text); }
+.msg.system.folded .body { max-height: 6.2em; overflow: hidden; }
+/* Scroll performance: each card is an isolated layout/paint island.
+   content-visibility:auto was measured slower here (cards re-measured while
+   scrolling during streaming), see relay/test/web-scroll-bench.py. */
+.msg { contain: layout paint style; }
+.msg .more { color: var(--dim); font-size: 12px; padding-left: 12px; cursor: pointer; }
+.msg.think .meta { color: #808080; }
+.msg.think .body { color: var(--think); font-style: italic; border-left: 2px solid #444; padding: 2px 10px; }
+.msg.think.collapsed .body { display: none; }
+.msg.tool {
+  background: var(--tool-bg);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.msg.tool .head { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.msg.tool .state { flex: none; width: 1.2em; text-align: center; }
+.msg.tool .name { color: #d7d7ff; font-weight: 600; flex: none; }
+.msg.tool .detail { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.msg.tool .elapsed { color: var(--dim); flex: none; }
+.msg.tool .summary { color: var(--dim); padding-left: 1.6em; white-space: pre-wrap; }
+.msg.tool .expanded { display: none; padding-left: 0.6em; color: #bcbcbc; }
+.msg.tool.open .expanded { display: block; }
+.msg.tool.open .summary { display: none; }
+.msg.tool .section { color: var(--dim); }
+.msg.tool pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.msg.tool .gutter { border-left: 1px solid #444; margin-left: 0.4em; padding-left: 0.8em; }
+.msg.tool.st-error .summary, .msg.tool.st-error pre.out { color: var(--err-text); }
+.msg.tool.st-rejected .summary { color: #d7875f; }
+.st-success .state { color: var(--ok); }
+.st-error .state { color: var(--danger); }
+.st-rejected .state { color: #d7875f; }
+.st-running .state, .st-preparing .state { color: var(--accent); }
+.st-aborted .state, .st-prepared .state, .st-queued .state { color: var(--dim); }
+.diff-add { color: #5fd75f; }
+.diff-del { color: #ff5f5f; }
+.msg.tool.child { margin-left: 1.6em; }
+/* Turn summary: dim left-ruled block, like renderSummaryBox. */
+.msg.summary .body {
+  border-left: 2px solid #444;
+  padding: 0 10px;
+  color: var(--dim);
+  font-size: 12px;
+}
+.spin { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+/* —— Markdown (mirrors internal/tui/markdown.go) —— */
+.md p { margin: 0 0 0.8em; }
+.md > :last-child { margin-bottom: 0; }
+.md strong { color: var(--md-bold); font-weight: 700; }
+.md em { color: var(--md-italic); font-style: italic; }
+.md del { color: var(--md-strike); }
+.md code.span { color: var(--md-code); font-family: var(--mono); font-size: 0.92em; }
+.md .h { color: var(--md-heading); font-weight: 700; margin: 0 0 0.8em; font-size: 1em; }
+.md a { color: var(--md-link); text-decoration: underline; }
+.md ul.md-list { list-style: none; margin: 0 0 0.8em; padding: 0; }
+.md ul.md-list ul.md-list { margin: 0; padding-left: 2ch; }
+.md li { margin: 0; }
+.md li > .bullet { color: var(--muted); margin-right: 1ch; }
+.md blockquote { margin: 0 0 0.8em; padding-left: 1.2ch; border-left: 1px solid var(--muted); }
+.md hr { border: 0; margin: 0 0 0.8em; height: auto; }
+.md hr::before { content: "────"; color: var(--dim); }
+.md pre.code {
+  background: var(--code-bg);
+  color: #f8f8f2;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0 0 0.8em;
+  overflow-x: auto;
+  white-space: pre;
+  font: 12.5px/1.45 var(--mono);
+  position: relative;
+}
+.md pre.code[data-lang]::before {
+  content: attr(data-lang);
+  position: absolute; right: 8px; top: 4px;
+  font-size: 10px; color: #75715e;
+}
+.md .tok-k { color: #f92672; } .md .tok-s { color: #e6db74; } .md .tok-c { color: #75715e; } .md .tok-n { color: #ae81ff; }
+.md table.md-table { border-collapse: collapse; margin: 0 0 0.8em; display: block; overflow-x: auto; max-width: 100%; }
+.md table.md-table th, .md table.md-table td { border: 1px solid #555; padding: 2px 8px; }
+.md table.md-table tr + tr td { border-top-style: dashed; }
+.md table.md-table th { color: var(--md-bold); font-weight: 700; }
+
+/* —— Composer with status rows above/below —— */
 .composer-wrap {
   position: relative;
   border-top: 1px solid var(--border);
-  padding: 8px;
-  padding-bottom: max(8px, var(--safe-b));
+  padding: 6px 8px;
+  padding-bottom: max(6px, var(--safe-b));
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  background: var(--panel);
 }
-#composer {
-  min-height: 64px;
-  max-height: min(40vh, 240px);
-  resize: vertical;
-  width: 100%;
-}
-.row { display: flex; gap: 8px; align-items: center; }
-.row > * { flex: none; }
-.grow { flex: 1; min-width: 0; }
-.dim { color: var(--muted); }
-.err { color: var(--danger); }
-[hidden] { display: none !important; }
-
-/* Mobile menu toggle — hidden on wide screens */
-#btnSessions {
-  display: inline-flex;
+#statusLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   align-items: center;
-  justify-content: center;
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 20px;
 }
+#statusLine .activity { color: var(--text); }
+#phaseTrack { display: inline-flex; gap: 2px; flex-wrap: wrap; }
+.phase { padding: 1px 6px; border-radius: 6px; font-size: 11px; background: var(--panel-2); color: var(--dim); }
+.phase.done { color: var(--ok); }
+.phase.cur { background: #1d4ed8; color: #fff; }
+.phase.blocked { background: #7f1d1d; color: #fff; }
+.composer-row { display: flex; gap: 6px; align-items: flex-end; }
+#composer {
+  flex: 1;
+  min-height: 44px;
+  max-height: min(30dvh, 200px);
+  resize: none;
+  width: 100%;
+  line-height: 1.4;
+}
+#btnSend, #btnStopTurn { min-height: 44px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip {
+  font-size: 12px;
+  min-height: 28px;
+  min-width: 0;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  max-width: 100%;
+}
+.chip .k { color: var(--muted); }
+.chip .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14em; }
+.chip.static { cursor: default; }
+#hint { font-size: 12px; }
 
+/* Popover picker for chips (model / thinking / mode). */
+#picker {
+  position: absolute;
+  left: 8px;
+  bottom: calc(100% - 4px);
+  z-index: 35;
+  min-width: 200px;
+  max-width: calc(100% - 16px);
+  max-height: min(50dvh, 320px);
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+}
+#picker .ptitle { font-size: 11px; color: var(--muted); padding: 6px 10px; text-transform: uppercase; }
+#picker button {
+  display: flex; width: 100%; text-align: left; border: 0; background: transparent;
+  border-radius: 8px; padding: 8px 10px; gap: 8px; justify-content: space-between; font-size: 14px;
+}
+#picker button:hover, #picker button[aria-selected="true"] { background: var(--panel-2); }
+#picker button .sub { color: var(--muted); font-size: 12px; }
+#picker button.cur::after { content: "✓"; color: var(--ok); }
 /* Slash command menu (listbox; focus stays in composer) */
 #slashMenu {
   position: absolute;
@@ -250,7 +413,6 @@ aside h2, .meta h2 {
   max-height: min(42dvh, 280px);
   overflow: auto;
   overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -260,71 +422,67 @@ aside h2, .meta h2 {
 }
 #slashMenu[aria-hidden="false"] { display: block; }
 .slash-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  text-align: left;
-  border: 0;
-  background: transparent;
-  border-radius: 8px;
-  padding: 10px 12px;
-  min-height: var(--touch);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; text-align: left; border: 0; background: transparent;
+  border-radius: 8px; padding: 8px 12px; min-height: var(--touch);
 }
-.slash-item .cmd {
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--accent);
-}
+.slash-item .cmd { font-family: var(--mono); font-size: 13px; color: var(--accent); }
 .slash-item .desc { color: var(--muted); font-size: 12px; }
-.slash-item[aria-selected="true"],
-.slash-item:hover { background: var(--panel-2); }
+.slash-item[aria-selected="true"], .slash-item:hover { background: var(--panel-2); }
 .slash-empty { padding: 12px; color: var(--muted); font-size: 12px; }
 
-/* Sessions drawer (narrow viewports) */
+/* Settings + create dialogs (full-screen sheet on mobile). */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgb(0 0 0 / 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(10px, var(--safe-t)) max(10px, var(--safe-r)) max(10px, var(--safe-b)) max(10px, var(--safe-l));
+}
+.sheet .panel {
+  width: min(480px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+}
+.sheet h3 { margin: 0; font-size: 16px; }
+.sheet label { font-size: 12px; color: var(--muted); }
+.sheet input, .sheet select { width: 100%; }
+.path-wrap { position: relative; }
+#pathMenu { display: none; flex-direction: column; gap: 2px; max-height: 30dvh; overflow: auto; margin-top: 4px; }
+#pathMenu.open { display: flex; }
+#pathMenu .item { min-height: 36px; padding: 6px 10px; font-family: var(--mono); font-size: 13px; }
+
 .drawer-backdrop {
   display: none;
   position: fixed;
   inset: 0;
   z-index: 40;
   background: rgb(0 0 0 / 0.45);
-  border: 0;
-  padding: 0;
-  border-radius: 0;
-  min-width: 0;
-  min-height: 0;
+  border: 0; padding: 0; border-radius: 0; min-width: 0; min-height: 0;
 }
 body.drawer-open .drawer-backdrop { display: block; }
-body.drawer-open { overflow: hidden; }
 
 @media (max-width: 899px) {
-  #app { gap: 6px; padding-top: max(6px, var(--safe-t)); }
-  header { padding: 6px 8px; gap: 6px; }
-  .brand h1 { font-size: 14px; }
-  .token-row { flex: 1 1 100%; order: 3; }
-  #chat { min-height: 0; }
-  .meta { padding: 6px 8px; gap: 6px; }
-  .meta .session-label { font-size: 12px; }
-  #transcript { padding: 8px; gap: 6px; }
-  .composer-wrap { padding: 6px 8px; gap: 6px; }
-  #composer {
-    min-height: 52px;
-    max-height: min(28dvh, 160px);
-    resize: none;
-  }
-  /* Off-canvas sessions drawer — keeps transcript dominant */
+  #app { gap: 4px; padding-left: max(4px, var(--safe-l)); padding-right: max(4px, var(--safe-r)); }
+  section#chat { border-left: 0; border-right: 0; border-radius: 0; }
+  #transcript { padding: 10px 8px; gap: 8px; }
+  .msg.user { max-width: 88%; }
   aside#sidebar {
     position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
+    top: 0; left: 0; bottom: 0;
     width: var(--drawer-width);
     z-index: 50;
     border-radius: 0;
-    border-left: 0;
-    border-top: 0;
-    border-bottom: 0;
+    border-left: 0; border-top: 0; border-bottom: 0;
     padding-top: max(10px, var(--safe-t));
     padding-bottom: max(10px, var(--safe-b));
     padding-left: max(10px, var(--safe-l));
@@ -332,98 +490,109 @@ body.drawer-open { overflow: hidden; }
     transition: transform 180ms ease;
     box-shadow: 8px 0 32px rgba(0, 0, 0, 0.4);
   }
-  @media (prefers-reduced-motion: reduce) {
-    aside#sidebar { transition: none; }
-  }
+  @media (prefers-reduced-motion: reduce) { aside#sidebar { transition: none; } }
   body.drawer-open aside#sidebar { transform: translateX(0); }
   #permissions { max-height: 30dvh; }
   #sessions { flex: 1; }
+  .chip .v { max-width: 9em; }
 }
-
 @media (min-width: 900px) {
-  #btnSessions { display: none; }
+  #btnSessions, #btnCloseSessions { display: none; }
   .drawer-backdrop { display: none !important; }
-  #main { grid-template-columns: 1fr 280px; }
-  aside#sidebar {
-    position: static;
-    transform: none !important;
-    box-shadow: none;
-    width: auto;
-  }
-  #slashMenu {
-    left: 8px;
-    right: auto;
-    width: min(360px, calc(100% - 16px));
-  }
+  #main { grid-template-columns: 280px 1fr; }
+  aside#sidebar { position: static; transform: none !important; width: auto; margin-bottom: 8px; }
+  #slashMenu { right: auto; width: min(360px, calc(100% - 16px)); }
 }
 </style>
 </head>
 <body>
 <div id="app">
   <header>
-    <div class="brand">
-      <button type="button" id="btnSessions" class="ghost" aria-controls="sidebar" aria-expanded="false" aria-label="Open sessions">☰</button>
-      <h1>FirstRule Relay</h1>
-      <span class="pill"><span id="statusDot" class="dot"></span><span id="statusText">offline</span></span>
+    <button type="button" id="btnSessions" class="ghost" aria-controls="sidebar" aria-expanded="false" aria-label="Open sessions">☰</button>
+    <div class="title">
+      <h1>FirstRule</h1>
+      <div id="sessionLabel">not connected</div>
     </div>
-<div class="token-row">
-      <input id="relayURL" type="url" inputmode="url" placeholder="Relay server (https://relay.example)" autocomplete="url" spellcheck="false" />
-      <input id="token" type="password" placeholder="Connect token" autocomplete="off" spellcheck="false" />
-      <button type="button" id="btnConnect" class="primary">Connect</button>
-      <button type="button" id="btnDisconnect" class="ghost" disabled>Disconnect</button>
-    </div>
+    <span class="pill" id="statusPill"><span id="statusDot" class="dot"></span><span id="statusText">offline</span></span>
+    <button type="button" id="btnSettings" class="ghost" aria-label="Settings" title="Settings">⚙</button>
   </header>
 
   <button type="button" class="drawer-backdrop" id="drawerBackdrop" aria-label="Close sessions" tabindex="-1"></button>
 
   <div id="main">
-    <section id="chat">
-      <div class="meta">
-        <div>
-          <h2>Session</h2>
-          <div id="sessionLabel" class="session-label dim">not connected</div>
-        </div>
-        <div class="meta-actions">
-          <button type="button" id="btnNew">New</button>
-          <button type="button" id="btnStop" class="danger" disabled>Stop</button>
-          <button type="button" id="btnRefresh" class="ghost">Refresh</button>
-        </div>
+    <aside id="sidebar" role="complementary" aria-label="Sessions">
+      <div class="row">
+        <h2 class="grow">Sessions</h2>
+        <button type="button" id="btnRefreshAgents" class="ghost" aria-label="Refresh sessions">↻</button>
+        <button type="button" id="btnCloseSessions" class="ghost" aria-label="Close sessions">✕</button>
       </div>
+      <div class="side-actions">
+        <button type="button" id="btnNew">＋ New</button>
+        <button type="button" id="btnStop" class="danger" disabled>Stop session</button>
+      </div>
+      <div id="sessions"><div class="dim">connect to load</div></div>
+      <div class="row">
+        <h2 class="grow">Permissions</h2>
+        <button type="button" id="btnRefreshPerms" class="ghost" aria-label="Refresh permissions">↻</button>
+      </div>
+      <div id="permissions"><div class="dim">none pending</div></div>
+      <button type="button" id="btnRefresh" class="ghost">Refresh all</button>
+    </aside>
+
+    <section id="chat">
       <div id="transcript" aria-live="polite"></div>
       <div class="composer-wrap">
         <div id="slashMenu" role="listbox" aria-label="Command menu" aria-hidden="true"></div>
-        <textarea id="composer" placeholder="Message the agent…  (/ for commands)" rows="3" disabled aria-autocomplete="list" aria-controls="slashMenu" aria-expanded="false"></textarea>
-        <div class="row">
-          <span class="dim grow" id="hint">Connect with a token to start. Type / for commands.</span>
-          <button type="button" id="btnSend" class="primary" disabled>Send</button>
+        <div id="picker" role="listbox" hidden></div>
+        <div id="statusLine" aria-live="polite">
+          <span id="activity" class="activity"></span>
+          <span id="phaseTrack"></span>
+          <span id="hint" class="dim grow">Open ⚙ settings to connect.</span>
+        </div>
+        <div class="composer-row">
+          <textarea id="composer" placeholder="Message FirstRule…  (/ for commands)" rows="1" disabled aria-autocomplete="list" aria-controls="slashMenu" aria-expanded="false"></textarea>
+          <button type="button" id="btnStopTurn" class="danger" hidden aria-label="Interrupt">■</button>
+          <button type="button" id="btnSend" class="primary" disabled aria-label="Send">➤</button>
+        </div>
+        <div class="chips" id="chips">
+          <button type="button" class="chip" id="chipModel" data-pick="model"><span class="k">model</span><span class="v" id="chipModelV">—</span></button>
+          <button type="button" class="chip" id="chipThinking" data-pick="thinking"><span class="k">thinking</span><span class="v" id="chipThinkingV">—</span></button>
+          <button type="button" class="chip" id="chipMode" data-pick="mode"><span class="k">flow</span><span class="v" id="chipModeV">—</span></button>
+          <span class="chip static" id="chipUsage" hidden><span class="v" id="chipUsageV"></span></span>
         </div>
       </div>
     </section>
-
-    <aside id="sidebar" role="complementary" aria-label="Sessions">
-      <div class="row">
-        <h2 class="grow">Agents / Sessions</h2>
-        <button type="button" id="btnCloseSessions" class="ghost" hidden aria-label="Close sessions">✕</button>
-        <button type="button" id="btnRefreshAgents" class="ghost">↻</button>
-      </div>
-      <div id="sessions"><div class="dim">connect to load</div></div>
-      <h2>Permissions</h2>
-      <div id="permissions"><div class="dim">none pending</div></div>
-      <button type="button" id="btnRefreshPerms" class="ghost">Refresh permissions</button>
-    </aside>
   </div>
 
-  <div id="createDialog" role="dialog" aria-modal="true" aria-labelledby="createTitle" hidden>
+  <div id="settingsDialog" class="sheet settings" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
+    <div class="panel">
+      <h3 id="settingsTitle">Settings</h3>
+      <label for="relayURL">Relay server</label>
+      <input id="relayURL" type="url" inputmode="url" placeholder="https://relay.example" autocomplete="url" spellcheck="false" />
+      <label for="token">Connect token</label>
+      <input id="token" type="password" placeholder="Connect token" autocomplete="off" spellcheck="false" />
+      <label class="row"><input id="autoConnect" type="checkbox" style="width:auto;min-height:0" /> <span>Connect automatically on open</span></label>
+      <div class="dim" style="font-size:12px">Saved in this browser only (localStorage).</div>
+      <div class="row">
+        <span class="grow dim" id="settingsHint"></span>
+        <button type="button" id="btnDisconnect" class="ghost" disabled>Disconnect</button>
+        <button type="button" id="btnSettingsClose" class="ghost">Close</button>
+        <button type="button" id="btnConnect" class="primary">Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="createDialog" class="sheet" role="dialog" aria-modal="true" aria-labelledby="createTitle" hidden>
     <div class="panel">
       <h3 id="createTitle">New session</h3>
-      <label class="dim" for="createWorkspace">Workspace directory</label>
+      <label for="createWorkspace">Workspace directory</label>
       <div class="path-wrap">
         <input id="createWorkspace" type="text" spellcheck="false" autocomplete="off" placeholder="~/Projects/my-app" />
         <div id="pathMenu" role="listbox" aria-label="Directory completions"></div>
       </div>
-      <label class="dim" for="createModel">Model (optional)</label>
+      <label for="createModel">Model (optional)</label>
       <select id="createModel"><option value="">default</option></select>
-      <label class="dim" for="createMode">Principle mode</label>
+      <label for="createMode">Principle mode</label>
       <select id="createMode">
         <option value="off">off</option>
         <option value="auto">auto</option>
@@ -441,23 +610,271 @@ body.drawer-open { overflow: hidden; }
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-const state = {
+
+  /* —— Markdown renderer ——
+   * Mirrors internal/tui/markdown.go (goldmark GFM → ANSI). Rules are
+   * specified in docs/subsystems/web-client.md#markdown. Output is built from
+   * escaped text only; raw HTML in the source is dropped like renderSkip. */
+  const MD = (() => {
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const safeURL = (u) => {
+      const v = String(u || "").trim();
+      return /^(https?:|mailto:|#|\/)/i.test(v) ? v : "";
+    };
+
+    function inline(src) {
+      let out = "";
+      let i = 0;
+      const s = String(src);
+      while (i < s.length) {
+        const ch = s[i];
+        // Backslash escapes.
+        if (ch === "\\" && i + 1 < s.length && /[\\`*_{}\[\]()#+\-.!~|<>]/.test(s[i + 1])) {
+          out += esc(s[i + 1]); i += 2; continue;
+        }
+        // Code span: `x` or ``x``.
+        if (ch === "`") {
+          let n = 0; while (s[i + n] === "`") n++;
+          const fence = "`".repeat(n);
+          const end = s.indexOf(fence, i + n);
+          if (end > 0) {
+            let body = s.slice(i + n, end);
+            if (/^ .* $/.test(body)) body = body.slice(1, -1);
+            out += '<code class="span">' + esc(body) + "</code>";
+            i = end + n; continue;
+          }
+        }
+        // Autolink <https://…>.
+        if (ch === "<") {
+          const m = /^<((?:https?:\/\/|mailto:)[^\s<>]+)>/i.exec(s.slice(i));
+          if (m) { out += '<a href="' + esc(m[1]) + '" target="_blank" rel="noopener">' + esc(m[1]) + "</a>"; i += m[0].length; continue; }
+          // Raw inline HTML tag: skipped (TUI renderSkip).
+          const h = /^<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>/.exec(s.slice(i));
+          if (h) { i += h[0].length; continue; }
+        }
+        // Image ![alt](url) → "!" + link-styled alt (TUI renderImage).
+        if (ch === "!" && s[i + 1] === "[") {
+          const m = /^!\[([^\]]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/.exec(s.slice(i));
+          if (m) {
+            const u = safeURL(m[2]);
+            out += "!" + (u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + inline(m[1]) + "</a>" : inline(m[1]));
+            i += m[0].length; continue;
+          }
+        }
+        // Link [label](url).
+        if (ch === "[") {
+          const m = /^\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/.exec(s.slice(i));
+          if (m) {
+            const u = safeURL(m[2]);
+            out += u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + inline(m[1]) + "</a>" : inline(m[1]);
+            i += m[0].length; continue;
+          }
+        }
+        // GFM bare autolink.
+        if ((ch === "h" || ch === "w") && (i === 0 || /[\s(]/.test(s[i - 1]))) {
+          const m = /^(?:https?:\/\/|www\.)[^\s<]*[^\s<.,:;"')\]!?]/.exec(s.slice(i));
+          if (m) {
+            const href = m[0].startsWith("www.") ? "http://" + m[0] : m[0];
+            out += '<a href="' + esc(href) + '" target="_blank" rel="noopener">' + esc(m[0]) + "</a>";
+            i += m[0].length; continue;
+          }
+        }
+        // Strikethrough ~~x~~ (GFM, also single ~x~).
+        if (ch === "~") {
+          const m = /^(~~?)(?!\s)([\s\S]*?\S)\1(?!~)/.exec(s.slice(i));
+          if (m) { out += "<del>" + inline(m[2]) + "</del>"; i += m[0].length; continue; }
+        }
+        // Emphasis: ** / __ → bold, * / _ → italic.
+        if (ch === "*" || ch === "_") {
+          const strong = new RegExp("^(\\" + ch + "\\" + ch + ")(?!\\s)([\\s\\S]*?\\S)\\" + ch + "\\" + ch + "(?!\\" + ch + ")").exec(s.slice(i));
+          const leftOK = ch === "*" || i === 0 || !/[A-Za-z0-9]/.test(s[i - 1]);
+          if (strong && leftOK) { out += "<strong>" + inline(strong[2]) + "</strong>"; i += strong[0].length; continue; }
+          const em = new RegExp("^\\" + ch + "(?![\\s" + (ch === "*" ? "*" : "_") + "])([\\s\\S]*?[^\\s\\\\])\\" + ch + (ch === "_" ? "(?![A-Za-z0-9])" : "")).exec(s.slice(i));
+          if (em && leftOK) { out += "<em>" + inline(em[1]) + "</em>"; i += em[0].length; continue; }
+        }
+        if (ch === "\n") { out += "<br>"; i++; continue; }
+        out += esc(ch);
+        i++;
+      }
+      return out;
+    }
+
+    // Small token colouring approximating chroma/monokai on fenced code.
+    const KW = /\b(func|function|return|if|else|for|while|switch|case|default|break|continue|const|let|var|type|struct|interface|package|import|from|export|class|def|async|await|new|try|catch|finally|throw|go|defer|chan|map|range|select|true|false|nil|null|undefined|None|True|False|self|this|in|of|not|and|or|fn|pub|use|impl|mut|match|echo|then|fi|do|done|esac)\b/g;
+    function highlight(code, lang) {
+      if (!lang) return esc(code);
+      const parts = [];
+      const re = /(\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`[^`]*`)|(\b\d+(?:\.\d+)?\b)/g;
+      const hashComments = /^(sh|bash|zsh|shell|py|python|rb|ruby|yaml|yml|toml|make|makefile|dockerfile|conf|ini)$/i.test(lang);
+      let last = 0; let m;
+      while ((m = re.exec(code))) {
+        if (m[1] && m[1][0] === "#" && !hashComments) continue;
+        if (m[1] && m[1].startsWith("//") && hashComments && !/^(sh|bash|zsh|shell)$/i.test(lang) && false) continue;
+        parts.push(esc(code.slice(last, m.index)).replace(KW, '<span class="tok-k">$1</span>'));
+        const cls = m[1] ? "tok-c" : m[2] ? "tok-s" : "tok-n";
+        parts.push('<span class="' + cls + '">' + esc(m[0]) + "</span>");
+        last = m.index + m[0].length;
+      }
+      parts.push(esc(code.slice(last)).replace(KW, '<span class="tok-k">$1</span>'));
+      return parts.join("");
+    }
+
+    function splitRow(line) {
+      let t = line.trim();
+      if (t.startsWith("|")) t = t.slice(1);
+      if (t.endsWith("|") && !t.endsWith("\\|")) t = t.slice(0, -1);
+      const cells = []; let cur = "";
+      for (let i = 0; i < t.length; i++) {
+        if (t[i] === "\\" && t[i + 1] === "|") { cur += "|"; i++; continue; }
+        if (t[i] === "|") { cells.push(cur.trim()); cur = ""; continue; }
+        cur += t[i];
+      }
+      cells.push(cur.trim());
+      return cells;
+    }
+
+    const RE = {
+      fence: /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)[^`]*$/,
+      heading: /^ {0,3}(#{1,6})(?:\s+(.*?))?(?:\s+#+\s*)?$/,
+      hr: /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/,
+      quote: /^ {0,3}> ?/,
+      list: /^( *)([-+*]|\d{1,9}[.)])(\s+|$)(.*)$/,
+      tableSep: /^ *\|? *:?-+:? *(\| *:?-+:? *)*\|? *$/,
+      // CommonMark HTML block starts: comments, block-level tags, or a lone tag on its line.
+      htmlBlock: /^ {0,3}(?:<!--|<\/?(?:address|article|aside|blockquote|details|div|dl|fieldset|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|tbody|td|th|thead|tr|ul|script|style|iframe)(?:[\s>/]|$)|<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>\s*$)/i,
+      setext: /^ {0,3}(=+|-+)\s*$/,
+    };
+
+    function blocks(lines) {
+      const out = [];
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        if (!line.trim()) { i++; continue; }
+        let m;
+        if ((m = RE.fence.exec(line))) {
+          const fence = m[1]; const lang = m[2] || "";
+          const body = []; i++;
+          while (i < lines.length && !new RegExp("^ {0,3}" + fence[0] + "{" + fence.length + ",}\\s*$").test(lines[i])) { body.push(lines[i]); i++; }
+          i++;
+          const code = body.join("\n");
+          out.push('<pre class="code"' + (lang ? ' data-lang="' + esc(lang) + '"' : "") + "><code>" + highlight(code, lang) + "</code></pre>");
+          continue;
+        }
+        if (/^( {4}|\t)/.test(line)) {
+          const body = [];
+          while (i < lines.length && (/^( {4}|\t)/.test(lines[i]) || !lines[i].trim())) { body.push(lines[i].replace(/^( {4}|\t)/, "")); i++; }
+          while (body.length && !body[body.length - 1].trim()) body.pop();
+          out.push('<pre class="code"><code>' + esc(body.join("\n")) + "</code></pre>");
+          continue;
+        }
+        if ((m = RE.heading.exec(line))) { out.push('<div class="h h' + m[1].length + '">' + inline(m[2] || "") + "</div>"); i++; continue; }
+        if (RE.hr.test(line)) { out.push("<hr>"); i++; continue; }
+        if (RE.htmlBlock.test(line)) {
+          // Raw HTML block: skipped through the next blank line (TUI renderSkip).
+          while (i < lines.length && lines[i].trim()) i++;
+          continue;
+        }
+        if (RE.quote.test(line)) {
+          const body = [];
+          while (i < lines.length && lines[i].trim() && (RE.quote.test(lines[i]) || body.length)) {
+            if (!RE.quote.test(lines[i]) && (RE.fence.test(lines[i]) || RE.heading.test(lines[i]) || RE.list.test(lines[i]))) break;
+            body.push(lines[i].replace(RE.quote, "")); i++;
+          }
+          out.push("<blockquote>" + blocks(body) + "</blockquote>");
+          continue;
+        }
+        if (line.includes("|") && i + 1 < lines.length && RE.tableSep.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+          const head = splitRow(line);
+          const aligns = splitRow(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? "center" : /-+:$/.test(c) ? "right" : /^:-+/.test(c) ? "left" : ""));
+          i += 2;
+          const rows = [];
+          while (i < lines.length && lines[i].trim() && lines[i].includes("|")) { rows.push(splitRow(lines[i])); i++; }
+          const cols = Math.max(head.length, aligns.length, ...rows.map((r) => r.length));
+          const cell = (tag, txt, c) => "<" + tag + (aligns[c] ? ' style="text-align:' + aligns[c] + '"' : "") + ">" + inline(txt || "") + "</" + tag + ">";
+          let html = '<table class="md-table"><thead><tr>';
+          for (let c = 0; c < cols; c++) html += cell("th", head[c], c);
+          html += "</tr></thead><tbody>";
+          for (const r of rows) { html += "<tr>"; for (let c = 0; c < cols; c++) html += cell("td", r[c], c); html += "</tr>"; }
+          out.push(html + "</tbody></table>");
+          continue;
+        }
+        if ((m = RE.list.exec(line))) {
+          // Collect the whole list (items + indented continuations).
+          const base = m[1].length;
+          const items = [];
+          while (i < lines.length) {
+            const l = lines[i];
+            const lm = RE.list.exec(l);
+            if (lm && lm[1].length <= base + 1 && lm[1].length >= base - 0) {
+              items.push([lm[4]]); i++; continue;
+            }
+            if (!l.trim()) {
+              const next = lines[i + 1];
+              if (next !== undefined && (/^\s{2,}/.test(next) || (RE.list.exec(next) && RE.list.exec(next)[1].length >= base))) { items[items.length - 1].push(""); i++; continue; }
+              break;
+            }
+            if (/^\s+/.test(l) && items.length) { items[items.length - 1].push(l.replace(new RegExp("^ {0," + (base + 4) + "}"), "")); i++; continue; }
+            if (items.length && !RE.list.test(l) && !RE.heading.test(l) && !RE.fence.test(l) && !RE.hr.test(l) && !RE.quote.test(l)) { items[items.length - 1].push(l); i++; continue; }
+            break;
+          }
+          let html = '<ul class="md-list">';
+          for (const it of items) {
+            let first = it[0] || "";
+            let box = "";
+            const tm = /^\[( |x|X)\]\s+/.exec(first);
+            if (tm) { box = tm[1] === " " ? "[ ] " : "[x] "; first = first.slice(tm[0].length); }
+            const rest = it.slice(1);
+            const restHTML = rest.some((x) => x.trim()) ? blocks(rest) : "";
+            const tight = !rest.some((x) => !x.trim());
+            html += '<li><span class="bullet">•</span>' + esc(box) + inline(first) + (restHTML ? (tight ? restHTML.replace(/^<p>([\s\S]*?)<\/p>/, '<br>$1') : restHTML) : "") + "</li>";
+          }
+          out.push(html + "</ul>");
+          continue;
+        }
+        // Paragraph (with setext heading support).
+        const para = [];
+        while (i < lines.length && lines[i].trim()) {
+          const l = lines[i];
+          if (para.length && (RE.fence.test(l) || RE.heading.test(l) || RE.quote.test(l) || RE.hr.test(l) && !RE.setext.test(l) || RE.htmlBlock.test(l) || RE.list.test(l) && !/^\s*\d/.test(l))) break;
+          if (para.length && RE.setext.test(l)) { out.push('<div class="h">' + inline(para.join("\n")) + "</div>"); para.length = 0; i++; break; }
+          para.push(l.replace(/^ {0,3}/, "")); i++;
+        }
+        if (para.length) out.push("<p>" + inline(para.join("\n").replace(/ {2,}\n/g, "\n")) + "</p>");
+      }
+      return out.join("");
+    }
+
+    function render(text) {
+      const src = String(text || "").replace(/\r\n?/g, "\n");
+      return blocks(src.split("\n"));
+    }
+    return { render, esc };
+  })();
+  window.FirstRuleMarkdown = MD;
+
+  /* —— State —— */
+  const state = {
     token: "",
     base: "",
     es: null,
     session: null,
     agents: [],
+    models: [],
     primaryId: "",
     connected: false,
-    streaming: null,
     historyLoadedFor: null,
     slashCursor: 0,
     slashMatches: [],
     stream: { asst: null, think: null, tools: {} },
     busy: false,
+    turnActive: false,
+    turnStart: 0,
+    activity: "",
     pendingUserText: "",
     pathMatches: [],
     pathCursor: 0,
+    totals: { cost: 0, input: 0, output: 0, cacheRead: 0 },
   };
 
   const SLASH_COMMANDS = [
@@ -466,6 +883,7 @@ const state = {
     { name: "resume", description: "open the session list" },
     { name: "continue", description: "retry with the selected model" },
     { name: "model", description: "switch model (optional id)" },
+    { name: "thinking", description: "pick thinking level" },
     { name: "principle", description: "off | auto | lite | full" },
     { name: "tasks", description: "recorded tool tasks" },
     { name: "agents", description: "delegated task states" },
@@ -481,144 +899,501 @@ const state = {
   ];
 
   const narrowMq = window.matchMedia("(max-width: 899px)");
+  const SYSTEM_FOLD_LINES = 4;      // tui.go systemCardFoldLines
+  const TOOL_INPUT_MAX = 5;         // toolCardInputMaxLines
+  const TOOL_OUTPUT_MAX = 10;       // toolCardOutputMaxLines
+  const TOOL_REVEAL_STEP = 20;      // toolCardRevealStep
 
-  function setStatus(ok, text) {
-    $("statusDot").className = "dot " + (ok === true ? "ok" : ok === false ? "bad" : "");
-    $("statusText").textContent = text;
+  /* —— Small DOM helpers —— */
+  function mk(tag, cls, text) {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text != null) el.textContent = text;
+    return el;
   }
-
-function setConnected(on) {
-    state.connected = on;
-    $("btnConnect").disabled = on;
-    $("btnDisconnect").disabled = !on;
-    $("relayURL").disabled = on;
-    $("token").disabled = on;
-    $("composer").disabled = !on;
-    $("btnSend").disabled = !on;
-    $("btnNew").disabled = !on;
-    $("btnStop").disabled = !on || !state.session || state.session.state === "stopped";
+  function transcript() { return $("transcript"); }
+  // Auto-follow is a flag maintained by a passive scroll listener, so writes
+  // never need to read layout (scrollHeight/clientHeight) synchronously.
+  let follow = true;
+  let scrollQueued = false;
+  function onTranscriptScroll() {
+    const t = transcript();
+    follow = (t.scrollHeight - t.scrollTop - (t.clientHeight || 0)) < 80;
   }
+  function nearBottom() { return follow; }
+  function stickBottom(force) {
+    if (force) follow = true;
+    if (!follow || scrollQueued) return;
+    scrollQueued = true;
+    raf(() => {
+      scrollQueued = false;
+      if (follow) { const t = transcript(); t.scrollTop = t.scrollHeight; }
+    });
+  }
+  const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (fn) => setTimeout(fn, 16);
+  // Streaming cards re-render Markdown at most once per frame.
+  const dirtyCards = new Set();
+  let flushQueued = false;
+  function flushCards() {
+    flushQueued = false;
+    for (const el of dirtyCards) renderCardBody(el);
+    dirtyCards.clear();
+  }
+  function scheduleRender(el) {
+    dirtyCards.add(el);
+    if (!flushQueued) { flushQueued = true; raf(flushCards); }
+  }
+  function formatCount(n) { return Number(n || 0).toLocaleString("en-US"); }
+  function turnTimeStr(ms) {
+    if (!(ms > 0)) return "0.0s";
+    if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
+    return Math.floor(ms / 60000) + "m " + (Math.floor(ms / 1000) % 60) + "s";
+  }
+  function firstLine(s) { const t = String(s || ""); const i = t.indexOf("\n"); return i < 0 ? t : t.slice(0, i); }
+  function parseJSON(s) { try { return JSON.parse(s); } catch { return null; } }
 
-function appendMsg(kind, text, meta) {
-    const el = document.createElement("div");
-    el.className = "msg " + (kind || "system");
-    if (meta) {
-      const m = document.createElement("div");
-      m.className = "meta";
-      m.textContent = meta;
-      el.appendChild(m);
-    }
-    const body = document.createElement("div");
-    body.className = "body";
-    body.textContent = text || "";
+  /* —— Cards —— */
+  // kind: user | agent | think | system | error | tool | summary
+  function appendCard(kind, text, title) {
+    const el = mk("div", "msg " + kind);
+    el.dataset.kind = kind;
+    el.dataset.text = text || "";
+    const meta = mk("div", "meta", title || "");
+    el._meta = meta;
+    el.appendChild(meta);
+    const body = mk("div", "body");
+    el._body = body;
     el.appendChild(body);
-    $("transcript").appendChild(el);
-    $("transcript").scrollTop = $("transcript").scrollHeight;
+    transcript().appendChild(el);
+    renderCardBody(el);
+    stickBottom(kind === "user");
     return el;
   }
 
-  function resetStreamCards() {
-    state.stream = { asst: null, think: null, tools: {} };
-  }
-
-  function clearTranscript() {
-    $("transcript").innerHTML = "";
-    resetStreamCards();
-    state.streaming = null;
-  }
-
-  function ensureStreamCard(kind, meta, key) {
-    if (key === "asst" && state.stream.asst) return state.stream.asst;
-    if (key === "think" && state.stream.think) return state.stream.think;
-    if (key && key !== "asst" && key !== "think" && state.stream.tools[key]) {
-      return state.stream.tools[key];
+  function renderCardBody(el) {
+    const kind = el.dataset.kind;
+    const text = el.dataset.text || "";
+    const body = el._body;
+    if (kind === "user" || kind === "agent" || kind === "think" || kind === "system") {
+      body.className = "body md";
+      body.innerHTML = MD.render(text);
+    } else {
+      body.className = "body";
+      body.textContent = text;
     }
-    const el = appendMsg(kind, "", meta);
-    if (key === "asst") state.stream.asst = el;
-    else if (key === "think") state.stream.think = el;
-    else if (key) state.stream.tools[key] = el;
+    if (kind === "system") applySystemFold(el);
+  }
+
+  function setCardText(el, text, now) {
+    if (!el) return;
+    el.dataset.text = text || "";
+    if (now) { dirtyCards.delete(el); renderCardBody(el); }
+    else scheduleRender(el);
+    stickBottom(false);
+  }
+  function appendCardText(el, text) {
+    if (!el || !text) return;
+    setCardText(el, (el.dataset.text || "") + text);
+  }
+
+  // System notices longer than 4 lines fold with "▸", like the TUI.
+  function applySystemFold(el) {
+    const lines = String(el.dataset.text || "").split("\n").length;
+    const fold = lines > SYSTEM_FOLD_LINES;
+    const open = el.dataset.open === "1";
+    el._meta.textContent = (fold ? (open ? "▾ " : "▸ ") : "") + "FirstRule [System]";
+    el.className = "msg system" + (fold && !open ? " folded" : "");
+    if (el._more) { el.removeChild && el.removeChild(el._more); el._more = null; }
+    if (fold && !open) {
+      el._more = mk("div", "more", "… +" + (lines - SYSTEM_FOLD_LINES) + " more lines · tap to expand");
+      el._more.onclick = () => toggleSystem(el);
+      el.appendChild(el._more);
+    }
+    el._meta.onclick = fold ? () => toggleSystem(el) : null;
+  }
+  function toggleSystem(el) { el.dataset.open = el.dataset.open === "1" ? "" : "1"; applySystemFold(el); }
+
+  function appendUser(text) { return appendCard("user", text, "You"); }
+  function appendAgent(text) { return appendCard("agent", text, "FirstRule"); }
+  function appendSystem(text) { return appendCard("system", text, "FirstRule [System]"); }
+  function appendError(text) { return appendCard("error", text, "Error"); }
+  function appendThinking(text, collapsed) {
+    const el = appendCard("think", text, "");
+    el.dataset.open = collapsed ? "" : "1";
+    syncThinking(el);
+    el._meta.onclick = () => { el.dataset.open = el.dataset.open === "1" ? "" : "1"; syncThinking(el); };
+    return el;
+  }
+  function syncThinking(el) {
+    const open = el.dataset.open === "1";
+    el._meta.textContent = (open ? "▾" : "▸") + " Thinking";
+    el.className = "msg think" + (open ? "" : " collapsed");
+  }
+
+  /* —— Tool cards (tui.go renderToolCard) —— */
+  const TOOL_STATE = { running: "◐", success: "✓", prepared: "✓", error: "✗", rejected: "⊘", aborted: "◌" };
+  function normTask(t) {
+    t = t || {};
+    const g = (a, b) => (t[a] != null ? t[a] : t[b]);
+    let dur = g("Duration", "duration");
+    // Go time.Duration marshals as nanoseconds; history uses durationMs.
+    let ms = t.durationMs != null ? t.durationMs : (dur ? dur / 1e6 : 0);
+    const started = g("StartedAt", "startedAt");
+    const ended = g("EndedAt", "endedAt");
+    const toMs = (v) => (typeof v === "number" ? (v > 1e14 ? v / 1e6 : v > 1e11 ? v : v * 1000) : (v && !String(v).startsWith("0001") ? Date.parse(v) : 0));
+    if (!ms && toMs(started) && toMs(ended)) ms = toMs(ended) - toMs(started);
+    let status = String(g("Status", "status") || "");
+    if (status === "done") status = "success";
+    return {
+      id: g("ID", "id") || "",
+      previewId: g("PreviewID", "previewId") || "",
+      name: g("Name", "name") || "tool",
+      args: g("Arguments", "arguments") || "",
+      status,
+      output: g("Output", "output") || "",
+      detail: g("Detail", "detail") || "",
+      cached: Boolean(g("Cached", "cached")),
+      ms,
+      startedMs: toMs(started),
+    };
+  }
+  function toolDisplayName(name) {
+    const n = String(name || "").replace(/^functions\./, "").replace(/_/g, " ").toLowerCase();
+    return n.charAt(0).toUpperCase() + n.slice(1);
+  }
+  function baseName(name) { return String(name || "").replace(/^functions\./, ""); }
+  function toolDetail(t) {
+    const a = parseJSON(t.args);
+    if (!a || typeof a !== "object") return String(t.args || "").split(/\s+/).join(" ").trim();
+    switch (baseName(t.name)) {
+      case "bash": case "powershell": return String(a.command || "").split(/\s+/).join(" ").trim();
+      case "read": {
+        let s = a.file_path || "";
+        if ((a.offset || 0) <= 1 && (!a.limit || a.limit >= 2000)) s += " (whole file)";
+        else if (a.offset > 1) s += " (from line " + a.offset + ")";
+        return s;
+      }
+      case "write": case "edit": return a.file_path || "";
+      case "grep": case "find": return a.pattern ? firstLine(a.pattern) + (a.path ? " in " + a.path : "") : (a.path || "");
+      case "ls": return a.path || "(workspace root)";
+      case "batch": {
+        const names = (a.calls || []).map((c) => c && c.name).filter(Boolean);
+        return names.length ? names.length + " calls: " + names.join(", ") : "preparing calls…";
+      }
+      default: return firstLine(t.args);
+    }
+  }
+  function countNonEmpty(s) {
+    const n = String(s || "").split("\n").filter((l) => l.trim()).length;
+    return n === 0 && s ? 1 : n;
+  }
+  function mutationSummary(t) {
+    const a = parseJSON(t.args);
+    if (!a) return "";
+    if (baseName(t.name) === "write") {
+      const added = countNonEmpty(a.content);
+      return /wrote/i.test(t.output) ? "↳ created · +" + added : "↳ write · +" + added;
+    }
+    if (baseName(t.name) === "edit") return "↳ diff · +" + countNonEmpty(a.new_string) + " · -" + countNonEmpty(a.old_string);
+    return "";
+  }
+  function mutationDiff(t) {
+    const a = parseJSON(t.args);
+    if (!a) return null;
+    const lines = [];
+    const push = (txt, sign) => { if (txt) for (const l of String(txt).replace(/\n$/, "").split("\n")) lines.push([sign, l]); };
+    if (baseName(t.name) === "write") { if (!a.content) return null; push(a.content, "+"); }
+    else if (baseName(t.name) === "edit") { push(a.old_string, "-"); push(a.new_string, "+"); }
+    else return null;
+    return lines;
+  }
+  // toolCollapsedSummary: one dim ↳ line under the header.
+  function toolCollapsedSummary(t) {
+    if (t.status === "success") { const s = mutationSummary(t); if (s) return s; }
+    const out = String(t.output || "").trim();
+    if (!out) return t.status === "running" ? "running…" : "";
+    if (firstLine(t.output).startsWith("[batch ")) return "↳ " + firstLine(t.output);
+    if (t.status === "error" || t.status === "rejected" || t.status === "aborted") return "↳ " + firstLine(out);
+    const lines = out.split("\n").length;
+    if (t.cached) return "↳ " + lines + " lines loaded";
+    return lines === 1 ? "↳ 1 line returned" : "↳ " + lines + " lines returned";
+  }
+  function toolInputText(t) {
+    if (!t.args) return "";
+    const a = parseJSON(t.args);
+    const n = baseName(t.name);
+    if (a && (n === "bash" || n === "powershell") && a.command) return "command: " + a.command;
+    if (a && (n === "write" || n === "edit" || n === "read") && (a.file_path || a.path)) return "file_path: " + (a.file_path || a.path);
+    return a ? JSON.stringify(a, null, 2) : t.args;
+  }
+
+  function upsertTool(raw, opts) {
+    const t = normTask(raw);
+    let key = t.id || t.previewId || ("tool-" + Date.now());
+    if (t.previewId && t.previewId !== t.id && state.stream.tools[t.previewId]) {
+      state.stream.tools[t.id] = state.stream.tools[t.previewId];
+      delete state.stream.tools[t.previewId];
+    }
+    let el = state.stream.tools[key];
+    if (!el) {
+      el = mk("div", "msg tool");
+      el.dataset.kind = "tool";
+      el.dataset.reveal = "0";
+      const head = mk("div", "head");
+      el._state = mk("span", "state");
+      el._name = mk("span", "name");
+      el._detail = mk("span", "detail");
+      el._elapsed = mk("span", "elapsed");
+      head.appendChild(el._state); head.appendChild(el._name); head.appendChild(el._detail); head.appendChild(el._elapsed);
+      head.onclick = () => { el.dataset.open = el.dataset.open === "1" ? "" : "1"; paintTool(el); };
+      head.setAttribute("role", "button");
+      head.setAttribute("aria-expanded", "false");
+      el._head = head;
+      el._summary = mk("div", "summary");
+      el._expanded = mk("div", "expanded");
+      el.appendChild(head); el.appendChild(el._summary); el.appendChild(el._expanded);
+      transcript().appendChild(el);
+      state.stream.tools[key] = el;
+    }
+    if (opts && opts.child) el.dataset.child = "1";
+    el._task = t;
+    paintTool(el);
+    stickBottom(false);
     return el;
   }
 
-  function setCardBody(el, text) {
-    if (!el) return;
-    const body = el.querySelector(".body");
-    if (body) body.textContent = text || "";
-    $("transcript").scrollTop = $("transcript").scrollHeight;
+  function paintTool(el) {
+    const t = el._task;
+    const open = el.dataset.open === "1";
+    el.className = "msg tool st-" + (t.status || "pending") + (open ? " open" : "") + (el.dataset.child ? " child" : "");
+    el._head.setAttribute("aria-expanded", open ? "true" : "false");
+    const spinning = t.status === "running" || t.status === "preparing";
+    el._state.textContent = spinning ? "◐" : (TOOL_STATE[t.status] || "…");
+    el._state.className = "state" + (spinning ? " spin" : "");
+    let name = toolDisplayName(t.name);
+    if (t.status === "preparing") name = "Preparing " + name;
+    if (t.status === "prepared") name = "Prepared " + name;
+    el._name.textContent = name;
+    el._detail.textContent = toolDetail(t);
+    el._elapsed.textContent = t.status === "running" && t.startedMs ? "· " + ((Date.now() - t.startedMs) / 1000).toFixed(1) + "s"
+      : t.ms > 0 && t.status !== "running" ? "· " + (t.ms / 1000).toFixed(1) + "s" : "";
+    const summary = toolCollapsedSummary(t);
+    el._summary.textContent = summary ? summary + (summary.startsWith("↳") ? " · tap to show more" : "") : "";
+    el.dataset.text = name + " " + el._detail.textContent + "\n" + el._summary.textContent;
+    el._expanded.innerHTML = "";
+    el._expanded.textContent = "";
+    if (!open) return;
+    const reveal = Number(el.dataset.reveal || 0);
+    const mutation = baseName(t.name) === "write" || baseName(t.name) === "edit";
+    const addMore = (box, hidden) => {
+      const more = mk("div", "more", "… +" + hidden + " more lines");
+      more.onclick = (ev) => { ev.stopPropagation && ev.stopPropagation(); el.dataset.reveal = String(reveal + TOOL_REVEAL_STEP); paintTool(el); };
+      box.appendChild(more);
+    };
+    if (!mutation) {
+      const input = toolInputText(t);
+      if (input && t.status !== "preparing") {
+        el._expanded.appendChild(mk("div", "section", "├ Input"));
+        const g = mk("div", "gutter");
+        const lines = input.split("\n");
+        const lim = TOOL_INPUT_MAX + reveal;
+        g.appendChild(mk("pre", "in", lines.slice(0, lim).join("\n")));
+        if (lines.length > lim) addMore(g, lines.length - lim);
+        el._expanded.appendChild(g);
+      }
+      el._expanded.appendChild(mk("div", "section", "└ Output"));
+    }
+    const box = mk("div", "gutter");
+    const diff = t.status === "success" ? mutationDiff(t) : null;
+    const lim = TOOL_OUTPUT_MAX + reveal;
+    if (diff) {
+      const pre = mk("pre", "out");
+      for (const [sign, l] of diff.slice(0, lim)) pre.appendChild(mk("div", sign === "+" ? "diff-add" : "diff-del", "▌ " + sign + " " + l));
+      box.appendChild(pre);
+      if (diff.length > lim) addMore(box, diff.length - lim);
+    } else {
+      const out = String(t.output || "").replace(/\n+$/, "");
+      if (!out) box.appendChild(mk("div", "dim", t.status === "running" ? "Pending…" : "(no output)"));
+      else {
+        const lines = out.split("\n");
+        box.appendChild(mk("pre", "out", lines.slice(0, lim).join("\n")));
+        if (lines.length > lim) addMore(box, lines.length - lim);
+      }
+    }
+    el._expanded.appendChild(box);
   }
 
-  function appendCardBody(el, text) {
-    if (!el || !text) return;
-    const body = el.querySelector(".body");
-    if (body) body.textContent = (body.textContent || "") + text;
-    $("transcript").scrollTop = $("transcript").scrollHeight;
+  /* —— Turn summary (tui.go renderSummaryBox) —— */
+  function summaryLine(d, durMs) {
+    const u = d.usage || {};
+    const n = (k) => Number(u[k] || 0);
+    const input = n("InputTokens"), output = n("OutputTokens");
+    let line = "Summary · " + turnTimeStr(durMs);
+    line += " · " + formatCount(input + output) + " tokens";
+    line += " · in " + formatCount(input) + " / out " + formatCount(output);
+    line += " · est. cost $" + n("Cost").toFixed(4);
+    line += " · cache read " + formatCount(n("CacheReadTokens")) + " / write " + formatCount(n("CacheWriteTokens"));
+    if (d.toolTotal > 0) line += " · tools " + (d.toolOk || 0) + "/" + d.toolTotal + " succeeded";
+    return line;
+  }
+  function appendSummary(d, durMs) {
+    const el = appendCard("summary", summaryLine(d, durMs), "");
+    el._meta.hidden = true;
+    return el;
   }
 
+  function resetStreamCards() { state.stream = { asst: null, think: null, tools: {} }; }
+  function clearTranscript() {
+    transcript().innerHTML = "";
+    if (transcript().children && transcript().children.length) transcript().children.length = 0;
+    resetStreamCards();
+  }
   function finishAssistantStreams() {
+    // Reasoning collapses when the answer starts, like TUI ctrl+t default after stream.
     state.stream.asst = null;
     state.stream.think = null;
   }
 
-  function taskLabel(task) {
-    if (!task) return "tool";
-    const name = task.Name || task.name || "tool";
-    const status = task.Status || task.status || "";
-    return name + (status ? (" · " + status) : "");
+  /* —— Status line / chips around the composer —— */
+  function setStatus(ok, text) {
+    $("statusDot").className = "dot " + (ok === true ? "ok" : ok === false ? "bad" : ok === "busy" ? "busy" : "");
+    $("statusText").textContent = text;
+  }
+  function setHint(text, isErr) {
+    $("hint").textContent = text || "";
+    $("hint").className = (isErr ? "err" : "dim") + " grow";
+  }
+  let activityTimer = null;
+  function setActivity(text) {
+    state.activity = text || "";
+    paintActivity();
+    if (state.turnActive && !activityTimer) activityTimer = setInterval(paintActivity, 500);
+    if (!state.turnActive && activityTimer) { clearInterval(activityTimer); activityTimer = null; }
+  }
+  function paintActivity() {
+    const el = $("activity");
+    if (!state.turnActive) { el.textContent = state.session ? (state.session.state || state.session.status || "idle") : ""; return; }
+    const spin = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[Math.floor(Date.now() / 100) % 10];
+    el.textContent = spin + " " + (state.activity || "waiting for response") + " · " + turnTimeStr(Date.now() - state.turnStart);
+    // Only touch the elapsed label of running tools; never rebuild cards here.
+    for (const k in state.stream.tools) {
+      const c = state.stream.tools[k];
+      const t = c && c._task;
+      if (t && t.status === "running" && t.startedMs) c._elapsed.textContent = "· " + ((Date.now() - t.startedMs) / 1000).toFixed(1) + "s";
+    }
+  }
+  function beginTurn() {
+    if (!state.turnActive) { state.turnActive = true; state.turnStart = Date.now(); state.turnHadText = false; }
+    $("btnStopTurn").hidden = false;
+    setStatus("busy", "running");
+  }
+  function endTurn() {
+    state.turnActive = false;
+    $("btnStopTurn").hidden = true;
+    setActivity("");
+    if (state.connected) setStatus(true, "live");
   }
 
-  function taskText(task) {
-    if (!task) return "";
-    const args = task.Arguments || task.arguments || "";
-    const out = task.Output || task.output || task.Detail || task.detail || "";
-    const parts = [];
-    if (args) parts.push(args);
-    if (out) parts.push(out);
-    return parts.join("\n");
+  function thinkingLevels() {
+    const id = state.session && state.session.model;
+    const m = state.models.find((x) => x.id === id);
+    return (m && m.thinking && m.thinking.length) ? m.thinking : [];
+  }
+  function renderChips() {
+    const s = state.session;
+    $("chipModelV").textContent = (s && s.model) || "—";
+    const levels = thinkingLevels();
+    $("chipThinkingV").textContent = (s && s.thinking) || (levels.length ? levels[0] : "off");
+    $("chipThinking").disabled = !s || !levels.length;
+    $("chipModeV").textContent = (s && s.mode) || "—";
+    $("chipModel").disabled = !s;
+    $("chipMode").disabled = !s;
+    const tot = state.totals;
+    if (tot.input || tot.output) {
+      $("chipUsage").hidden = false;
+      $("chipUsageV").textContent = "◇ $" + tot.cost.toFixed(4) + " · " + formatCount(tot.input + tot.output) + " tok" +
+        (tot.input ? " · ↺ " + Math.round(100 * tot.cacheRead / Math.max(1, tot.input)) + "%" : "");
+    } else $("chipUsage").hidden = true;
+    renderPhases();
+  }
+  // Workflow track mirrors TUI footerPhase ("phase: X" / "complete").
+  function renderPhases() {
+    const box = $("phaseTrack");
+    box.innerHTML = "";
+    const wf = state.session && state.session.workflow;
+    if (!wf || !wf.phases || !wf.phases.length) return;
+    wf.phases.forEach((p, i) => {
+      const cls = wf.complete || i < wf.index ? "done" : i === wf.index ? (wf.blocked ? "blocked" : "cur") : "";
+      const el = mk("span", "phase " + cls, (cls === "done" ? "✓ " : "") + p);
+      box.appendChild(el);
+    });
+    if (wf.complete) box.appendChild(mk("span", "phase done", "complete"));
   }
 
+  function updateSessionLabel() {
+    const s = state.session;
+    if (!s) {
+      $("sessionLabel").textContent = state.connected ? "no active session" : "not connected";
+      $("btnStop").disabled = true;
+    } else {
+      const ws = String(s.workspace || "").replace(/\/+$/, "").split("/").pop() || s.workspace || "";
+      $("sessionLabel").textContent = (ws ? ws + " · " : "") + (s.id || "?");
+      $("sessionLabel").title = (s.workspace || "") + " · " + (s.id || "");
+      $("btnStop").disabled = !state.connected || s.state === "stopped";
+      if (s.busy && !state.turnActive) { beginTurn(); setActivity("running"); }
+    }
+    renderChips();
+    paintActivity();
+  }
+
+  /* —— Agent event stream (same event names as the TUI Hub) —— */
   function handleAgentEvent(type, data) {
     switch (type) {
-case "user_message": {
+      case "user_message": {
         finishAssistantStreams();
+        beginTurn();
+        setActivity("waiting for response");
         const text = data.text || "";
-        // Dedupe optimistic local echo from send().
-        if (state.pendingUserText && text === state.pendingUserText) {
-          state.pendingUserText = "";
-          break;
-        }
-        appendMsg("user", text, "user");
+        if (state.pendingUserText && text === state.pendingUserText) { state.pendingUserText = ""; break; }
+        appendUser(text);
         break;
       }
       case "reasoning_delta": {
         if (!(data.text || "")) break;
+        beginTurn();
+        setActivity("thinking");
         if (state.stream.asst) finishAssistantStreams();
-        const card = ensureStreamCard("think", "thinking", "think");
-        appendCardBody(card, data.text || "");
+        if (!state.stream.think) state.stream.think = appendThinking("", false);
+        appendCardText(state.stream.think, data.text);
         break;
       }
       case "reasoning_end": {
-        finishAssistantStreams();
+        if (state.stream.think) { state.stream.think.dataset.open = ""; syncThinking(state.stream.think); }
+        state.stream.think = null;
         break;
       }
       case "text_delta": {
-        if (state.stream.think) finishAssistantStreams();
-        const card = ensureStreamCard("agent", "assistant", "asst");
-        appendCardBody(card, data.text || "");
+        beginTurn();
+        setActivity("streaming response");
+        if (state.stream.think) { state.stream.think.dataset.open = ""; syncThinking(state.stream.think); state.stream.think = null; }
+        if (!state.stream.asst) state.stream.asst = appendAgent("");
+        state.turnHadText = true;
+        appendCardText(state.stream.asst, data.text || "");
         break;
       }
       case "system_notice": {
         finishAssistantStreams();
         const id = data.noticeId || "";
-        const existing = id && Array.from($("transcript").children).find((el) => el.dataset.noticeId === id);
-        if (existing) setCardBody(existing, data.text || "");
+        const existing = id && Array.from(transcript().children).find((el) => el.dataset && el.dataset.noticeId === id);
+        if (existing) setCardText(existing, data.text || "");
         else {
-          const card = appendMsg("system", data.text || "", "system");
+          const card = appendSystem(data.text || "");
           if (id) card.dataset.noticeId = id;
         }
         break;
       }
       case "permission_request": {
-        appendMsg("system", data.text || "permission requested", "permission");
+        appendSystem("Permission requested" + (data.text ? ": " + data.text : "") + " — review it in the sidebar.");
         refreshPermissions().catch(() => {});
         break;
       }
@@ -626,45 +1401,52 @@ case "user_message": {
       case "tool_start":
       case "tool_done": {
         finishAssistantStreams();
-        const task = data.task || {};
-        const id = task.ID || task.id || task.PreviewID || task.previewId || ("tool-" + Date.now());
-        const preview = task.PreviewID || task.previewId;
-        if (preview && preview !== id && state.stream.tools[preview]) {
-          state.stream.tools[id] = state.stream.tools[preview];
-          delete state.stream.tools[preview];
-        }
-        const card = ensureStreamCard("tool", taskLabel(task), id);
-        const meta = card.querySelector(".meta");
-        if (meta) meta.textContent = taskLabel(task);
-        setCardBody(card, taskText(task));
-        if (type === "tool_done") delete state.stream.tools[id];
+        beginTurn();
+        setActivity(type === "tool_preparing" ? "preparing tool" : type === "tool_start" ? "running tool" : "waiting for response");
+        const task = Object.assign({}, data.task || {});
+        if (type === "tool_preparing" && !task.Status && !task.status) task.status = "preparing";
+        upsertTool(task);
         break;
       }
-      case "stream_done": {
+      case "stream_done":
         finishAssistantStreams();
         break;
-      }
       case "turn_done": {
+        // Mark leftover preparing cards aborted, then append the Summary box.
+        for (const k in state.stream.tools) {
+          const c = state.stream.tools[k];
+          if (c && c._task && c._task.status === "preparing") { c._task.status = "aborted"; paintTool(c); }
+        }
+        if (typeof flushCards === "function") flushCards();
         finishAssistantStreams();
-        const bits = [];
-        if (data.turn) bits.push(data.turn);
-        if (data.error) bits.push("error: " + data.error);
-        if (data.toolTotal) bits.push("tools " + (data.toolOk || 0) + "/" + data.toolTotal);
-        appendMsg("system", bits.join("\n") || "turn done", "turn_done");
+        // Non-streamed replies arrive only in turn_done.turn; show them once.
+        if (!state.turnHadText && data.turn && String(data.turn).trim()) appendAgent(data.turn);
+        state.turnHadText = false;
+        const dur = state.turnActive ? Date.now() - state.turnStart : 0;
+        if (data.error) appendError("turn interrupted: " + data.error);
+        appendSummary(data, dur);
+        const u = data.usage || {};
+        state.totals.cost += Number(u.Cost || 0);
+        state.totals.input += Number(u.InputTokens || 0);
+        state.totals.output += Number(u.OutputTokens || 0);
+        state.totals.cacheRead += Number(u.CacheReadTokens || 0);
+        endTurn();
+        setHint(data.error ? "turn interrupted" : "turn finished · " + turnTimeStr(dur), Boolean(data.error));
         refreshSession().catch(() => {});
         break;
       }
       case "agent_error": {
         finishAssistantStreams();
-        appendMsg("system", data.error || data.text || "agent error", "agent_error");
+        appendError(data.error || data.text || "agent error");
+        endTurn();
         refreshSession().catch(() => {});
         break;
       }
       case "ping":
         break;
       default: {
-        const text = data.text || data.turn || data.error || "";
-        if (text) appendMsg("system", text, type || "event");
+        const text = data.text || data.error || "";
+        if (text) appendSystem(text);
         break;
       }
     }
@@ -685,70 +1467,48 @@ case "user_message": {
     return data;
   }
 
-function renderHistory(hist) {
+  function renderHistory(hist) {
     clearTranscript();
     const msgs = (hist && hist.messages) || [];
     const tasks = (hist && hist.tasks) || [];
     const byID = {};
-    for (const t of tasks) {
-      if (t && t.id) byID[t.id] = t;
-    }
+    for (const t of tasks) if (t && t.id) byID[t.id] = t;
     for (const m of msgs) {
       const role = (m && m.role) || "";
-      if (role === "user") {
-        appendMsg("user", m.text || "", "user");
-      } else if (role === "assistant") {
-        appendMsg("agent", m.text || "", "assistant");
-      } else if (role === "thinking") {
-        appendMsg("think", m.text || "", "thinking");
-      } else if (role === "system") {
-        const card = appendMsg("system", m.text || "", "system");
+      if (role === "user") appendUser(m.text || "");
+      else if (role === "assistant") appendAgent(m.text || "");
+      else if (role === "thinking") appendThinking(m.text || "", true);
+      else if (role === "system") {
+        const card = appendSystem(m.text || "");
         if (m.noticeId) card.dataset.noticeId = m.noticeId;
       } else if (role === "tool_call") {
-        const task = byID[m.taskId] || { id: m.taskId, name: "tool", status: "" };
-        const card = appendMsg("tool", taskText(task), taskLabel(task));
-        if (task.id) state.stream.tools[task.id] = card;
+        upsertTool(byID[m.taskId] || { id: m.taskId, name: "tool", status: "aborted" });
       }
     }
+    resetStreamCards();
+    stickBottom(true);
   }
 
   async function loadHistory(sessionId) {
-    if (!sessionId) return;
-    if (state.historyLoadedFor === sessionId) return;
+    if (!sessionId || state.historyLoadedFor === sessionId) return;
     try {
       const hist = await api("/v1/history");
-      if (hist && hist.id && hist.id !== sessionId) {
-        throw new Error("history session mismatch: wanted " + sessionId + " got " + hist.id);
-      }
+      if (hist && hist.id && hist.id !== sessionId) throw new Error("history session mismatch: wanted " + sessionId + " got " + hist.id);
       renderHistory(hist || { messages: [], tasks: [] });
       state.historyLoadedFor = sessionId;
       const n = ((hist && hist.messages) || []).length;
-      if (n) $("hint").textContent = "Restored " + n + " history message(s).";
+      if (n) setHint("Restored " + n + " history message(s).");
     } catch (err) {
-      appendMsg("system", "history: " + (err.message || err), "system");
+      appendError("history: " + (err.message || err));
     }
   }
 
-  function updateSessionLabel() {
-    const s = state.session;
-    if (!s) {
-      $("sessionLabel").textContent = "no active session";
-      $("btnStop").disabled = true;
-      return;
-    }
-    $("sessionLabel").textContent = (s.id || "?") + " · " + (s.state || "?") + (s.model ? " · " + s.model : "");
-    $("btnStop").disabled = !state.connected || s.state === "stopped";
-  }
+  function closeEvents() { if (state.es) { state.es.close(); state.es = null; } }
 
-  function closeEvents() {
-    if (state.es) { state.es.close(); state.es = null; }
-  }
-
-function openEvents() {
+  function openEvents() {
     closeEvents();
     resetStreamCards();
-    const url = state.base + "/v1/events";
-    const es = new EventSource(url);
+    const es = new EventSource(state.base + "/v1/events");
     state.es = es;
     const on = (type) => (ev) => {
       let data = {};
@@ -756,37 +1516,24 @@ function openEvents() {
       handleAgentEvent(type, data || {});
     };
     [
-      "user_message",
-      "text_delta",
-      "reasoning_delta",
-      "reasoning_end",
-      "system_notice",
-      "tool_preparing",
-      "tool_start",
-      "tool_done",
-      "stream_done",
-      "turn_done",
-      "agent_error",
-      "permission_request",
+      "user_message", "text_delta", "reasoning_delta", "reasoning_end", "system_notice",
+      "tool_preparing", "tool_start", "tool_done", "stream_done", "turn_done", "agent_error", "permission_request",
     ].forEach((t) => es.addEventListener(t, on(t)));
     es.onmessage = (ev) => {
       let data = {};
       try { data = JSON.parse(ev.data || "{}"); } catch { data = { text: ev.data || "" }; }
       handleAgentEvent((data && data.type) || "message", data || {});
     };
-    es.onopen = () => setStatus(true, "live");
-    es.onerror = () => setStatus(false, "sse error / reconnecting");
+    es.onopen = () => { if (!state.turnActive) setStatus(true, "live"); };
+    es.onerror = () => setStatus(false, "reconnecting");
   }
 
-function normalizeAgents(list, primaryId) {
+  /* —— Sessions sidebar —— */
+  function normalizeAgents(list, primaryId) {
     const pid = primaryId || "";
     return (list || []).map((a) => {
-      const id = a && (a.id || a.ID) || "";
-      return Object.assign({}, a, {
-        id,
-        state: a.state || a.status || "",
-        selected: Boolean(id && pid && id === pid),
-      });
+      const id = (a && (a.id || a.ID)) || "";
+      return Object.assign({}, a, { id, state: a.state || a.status || "", selected: Boolean(id && pid && id === pid) });
     });
   }
 
@@ -794,22 +1541,22 @@ function normalizeAgents(list, primaryId) {
     const box = $("sessions");
     box.innerHTML = "";
     if (!state.agents.length) {
-      box.innerHTML = "<div class=\"dim\">no agents — use New or /new to create one</div>";
+      box.innerHTML = "<div class=\"dim\">no sessions — use ＋ New or /new</div>";
       return;
     }
     for (const a of state.agents) {
       const selected = Boolean(a.selected || (a.id && a.id === state.primaryId));
-      const btn = document.createElement("button");
+      const btn = mk("button", "item" + (selected ? " active" : ""));
       btn.type = "button";
-      btn.className = "item" + (selected ? " active" : "");
-      const idEl = document.createElement("div");
-      idEl.className = "id";
-      idEl.textContent = a.id;
-      const subEl = document.createElement("div");
-      subEl.className = "sub";
-      subEl.textContent = (a.state || "") + (a.model ? " · " + a.model : "") + (selected ? " · selected" : "");
-      btn.appendChild(idEl);
-      btn.appendChild(subEl);
+      const ws = String(a.workspace || "").replace(/\/+$/, "");
+      btn.appendChild(mk("div", "ws", ws.split("/").pop() || ws || "(workspace)"));
+      btn.appendChild(mk("div", "id", a.id));
+      const sub = mk("div", "sub");
+      const dot = mk("span", "dot " + (a.busy ? "busy" : a.state === "stopped" ? "bad" : "ok"));
+      sub.appendChild(dot);
+      sub.appendChild(mk("span", "", [a.busy ? "running" : a.state, a.model, a.mode && a.mode !== "off" ? "flow " + a.mode : "", selected ? "selected" : ""].filter(Boolean).join(" · ")));
+      btn.appendChild(sub);
+      btn.title = a.workspace || "";
       btn.onclick = () => selectAgent(a.id);
       box.appendChild(btn);
     }
@@ -823,19 +1570,24 @@ function normalizeAgents(list, primaryId) {
     return data;
   }
 
-async function ensurePrimarySelected() {
+  async function ensurePrimarySelected() {
     if (!state.agents.length) return false;
     const want = state.primaryId || state.agents[0].id;
     if (!want) return false;
     // Always POST select so an unbound Bridge gets BindPrimary before session/send.
-    const data = await api("/v1/agents/" + encodeURIComponent(want) + "/select", {
-      method: "POST",
-      body: "{}",
-    });
+    const data = await api("/v1/agents/" + encodeURIComponent(want) + "/select", { method: "POST", body: "{}" });
     state.primaryId = (data && data.primaryId) || want;
     state.agents = normalizeAgents(state.agents, state.primaryId);
     renderSessions();
     return true;
+  }
+
+  async function refreshModels() {
+    try {
+      const data = await api("/v1/models");
+      state.models = (data && data.models) || [];
+    } catch { state.models = []; }
+    renderChips();
   }
 
   async function refreshSession() {
@@ -843,81 +1595,59 @@ async function ensurePrimarySelected() {
       const s = await api("/v1/session");
       state.session = s && s.id ? s : null;
     } catch (err) {
-      if (err && err.status === 503) {
-        state.session = null;
-      } else {
-        throw err;
-      }
+      if (err && err.status === 503) state.session = null;
+      else throw err;
     }
     updateSessionLabel();
     if (state.session && state.session.id) await loadHistory(state.session.id);
   }
 
-async function refreshPermissions() {
+  async function refreshPermissions() {
     const list = await api("/v1/permissions");
     const box = $("permissions");
     box.innerHTML = "";
     const items = Array.isArray(list) ? list : (list && list.permissions) || [];
-    if (!items.length) {
-      box.innerHTML = "<div class=\"dim\">none pending</div>";
-      return;
-    }
+    if (!items.length) { box.innerHTML = "<div class=\"dim\">none pending</div>"; return; }
     for (const p of items) {
-      const wrap = document.createElement("div");
-      wrap.className = "item";
-      const title = document.createElement("div");
-      title.className = "id";
-      title.textContent = "#" + (p.id != null ? p.id : "?") + " " + (p.capability || p.tool || p.name || "permission");
-      const sub = document.createElement("div");
-      sub.className = "sub";
-      sub.textContent = p.reason || p.detail || p.summary || p.taskId || "";
-      const row = document.createElement("div");
-      row.className = "row";
+      const wrap = mk("div", "item");
+      wrap.appendChild(mk("div", "ws", "#" + (p.id != null ? p.id : "?") + " " + (p.capability || p.tool || p.name || "permission")));
+      wrap.appendChild(mk("div", "sub", [p.reason || p.detail || p.summary || "", p.task_id || p.taskId ? "task " + (p.task_id || p.taskId) : ""].filter(Boolean).join(" · ")));
+      const row = mk("div", "row");
       row.style.marginTop = "6px";
-      const allow = document.createElement("button");
+      const allow = mk("button", "primary", "Approve");
       allow.type = "button";
-      allow.className = "primary";
-      allow.textContent = "Approve";
       allow.onclick = () => decidePermission(p.id, true);
-      const deny = document.createElement("button");
+      const deny = mk("button", "danger", "Deny");
       deny.type = "button";
-      deny.className = "danger";
-      deny.textContent = "Deny";
       deny.onclick = () => decidePermission(p.id, false);
       row.appendChild(allow);
       row.appendChild(deny);
-      wrap.appendChild(title);
-      wrap.appendChild(sub);
       wrap.appendChild(row);
       box.appendChild(wrap);
     }
   }
 
-async function decidePermission(id, approve) {
+  async function decidePermission(id, approve) {
     try {
-      await api("/v1/permissions/" + id, {
-        method: "POST",
-        body: JSON.stringify({ approve }),
-      });
-      appendMsg("system", (approve ? "approved" : "denied") + " permission #" + id, "permission");
+      await api("/v1/permissions/" + id, { method: "POST", body: JSON.stringify({ approve }) });
+      appendSystem((approve ? "Approved" : "Denied") + " permission #" + id);
       await refreshPermissions();
     } catch (err) {
-      appendMsg("system", String(err.message || err), "permission");
+      appendError(String(err.message || err));
     }
   }
 
-function normalizeRelayOrigin(raw) {
+  /* —— Connection & settings page (localStorage) —— */
+  const LS = { url: "firstrule.relayURL", token: "firstrule.relay.token", auto: "firstrule.relay.autoConnect" };
+  function normalizeRelayOrigin(raw) {
     const value = String(raw || "").trim();
     if (!value) return "";
     try {
       const u = new URL(value);
       if (u.protocol !== "http:" && u.protocol !== "https:") return "";
       return u.origin;
-    } catch {
-      return "";
-    }
+    } catch { return ""; }
   }
-
   function defaultRelayOrigin() {
     if (location.protocol === "http:" || location.protocol === "https:") {
       const path = location.pathname.replace(/\/+$/, "");
@@ -926,9 +1656,34 @@ function normalizeRelayOrigin(raw) {
     }
     return "";
   }
+  function tunnelBase(origin, token) { return String(origin).replace(/\/+$/, "") + "/c/" + encodeURIComponent(token); }
 
-  function tunnelBase(origin, token) {
-    return String(origin).replace(/\/+$/, "") + "/c/" + encodeURIComponent(token);
+  function saveSettings() {
+    const origin = normalizeRelayOrigin($("relayURL").value);
+    localStorage.setItem(LS.url, origin || $("relayURL").value.trim());
+    localStorage.setItem(LS.token, $("token").value.trim());
+    localStorage.setItem(LS.auto, $("autoConnect").checked ? "1" : "");
+  }
+  function openSettings() {
+    $("settingsDialog").hidden = false;
+    document.body.classList.add("settings-open");
+    $("settingsHint").textContent = state.connected ? "Connected via " + ($("relayURL").value || "") : "";
+  }
+  function closeSettings() {
+    $("settingsDialog").hidden = true;
+    document.body.classList.remove("settings-open");
+  }
+
+  function setConnected(on) {
+    state.connected = on;
+    $("btnConnect").disabled = on;
+    $("btnDisconnect").disabled = !on;
+    $("relayURL").disabled = on;
+    $("token").disabled = on;
+    $("composer").disabled = !on;
+    $("btnSend").disabled = !on;
+    $("btnNew").disabled = !on;
+    $("btnStop").disabled = !on || !state.session || state.session.state === "stopped";
   }
 
   async function connect() {
@@ -936,58 +1691,62 @@ function normalizeRelayOrigin(raw) {
     const origin = normalizeRelayOrigin(entered) || normalizeRelayOrigin(defaultRelayOrigin());
     const token = $("token").value.trim();
     if (!origin || !token) {
-      $("hint").textContent = "Relay server URL and token are required";
-      $("hint").className = "err grow";
+      $("settingsHint").textContent = "Relay server URL and token are required";
+      setHint("Relay server URL and token are required — open ⚙ settings", true);
+      openSettings();
       return;
     }
     if (entered && !normalizeRelayOrigin(entered)) {
-      $("hint").textContent = "Relay server must be an http(s) URL";
-      $("hint").className = "err grow";
+      $("settingsHint").textContent = "Relay server must be an http(s) URL";
+      setHint("Relay server must be an http(s) URL", true);
       return;
     }
     $("relayURL").value = origin;
-    localStorage.setItem("firstrule.relayURL", origin);
-    localStorage.setItem("firstrule.relay.token", token);
+    saveSettings();
     state.token = token;
     state.base = tunnelBase(origin, token);
     state.historyLoadedFor = null;
-    $("hint").className = "dim grow";
-    $("hint").textContent = "Connecting…";
+    setHint("Connecting…");
+    $("settingsHint").textContent = "Connecting…";
     try {
       const hz = await fetch(state.base + "/healthz");
       if (!hz.ok) throw new Error("healthz " + hz.status);
-setConnected(true);
+      setConnected(true);
+      closeSettings();
       clearTranscript();
-      appendMsg("system", "Connected via " + origin + " (token hidden)", "system");
-await refreshAgents();
+      await refreshAgents();
       const bound = await ensurePrimarySelected();
       if (!bound) {
-        appendMsg("system", "No running agents on the desktop. Start or resume a session in the daemon, then refresh.", "system");
-        $("hint").textContent = "Connected, but no primary agent yet.";
+        appendSystem("No running sessions on the desktop. Create one with ＋ New, or start one in the daemon and refresh.");
+        setHint("Connected, but no session yet.");
       }
+      await refreshModels();
       await refreshSession();
       await refreshPermissions();
       // Subscribe only after BindPrimary: /v1/events snapshots the hub at open time.
       if (bound) openEvents();
-      else setStatus(false, "waiting for primary");
-      $("composer").focus();
-      if (bound) $("hint").textContent = "Connected. Type / for commands.";
+      else setStatus(false, "waiting for session");
+      if (!isNarrow()) $("composer").focus();
+      if (bound) setHint("Connected. Type / for commands.");
     } catch (err) {
       setConnected(false);
       setStatus(false, "offline");
-      $("hint").className = "err grow";
-      $("hint").textContent = String(err.message || err);
+      setHint(String(err.message || err), true);
+      $("settingsHint").textContent = String(err.message || err);
+      openSettings();
     }
   }
 
   function disconnect() {
     closeEvents();
     closeSlashMenu();
+    closePicker();
     closeSessionsDrawer();
     setConnected(false);
+    endTurn();
     setStatus(null, "offline");
     state.base = "";
-state.session = null;
+    state.session = null;
     state.agents = [];
     state.primaryId = "";
     state.pendingUserText = "";
@@ -995,20 +1754,18 @@ state.session = null;
     updateSessionLabel();
     $("sessions").innerHTML = "<div class=\"dim\">connect to load</div>";
     $("permissions").innerHTML = "<div class=\"dim\">none pending</div>";
-    $("hint").className = "dim grow";
-    $("hint").textContent = "Disconnected";
+    setHint("Disconnected");
+    $("settingsHint").textContent = "Disconnected";
   }
 
-async function selectAgent(id) {
+  async function selectAgent(id) {
     try {
       closeEvents();
       state.historyLoadedFor = null;
-      const data = await api("/v1/agents/" + encodeURIComponent(id) + "/select", {
-        method: "POST",
-        body: "{}",
-      });
+      const data = await api("/v1/agents/" + encodeURIComponent(id) + "/select", { method: "POST", body: "{}" });
       state.primaryId = (data && data.primaryId) || id;
       clearTranscript();
+      endTurn();
       await refreshAgents();
       await refreshSession();
       await refreshPermissions();
@@ -1016,17 +1773,77 @@ async function selectAgent(id) {
       openEvents();
       closeSessionsDrawer();
     } catch (err) {
-      appendMsg("system", String(err.message || err), "system");
+      appendError(String(err.message || err));
     }
   }
 
-async function listDirectories(path, prefix) {
+  /* —— Chip pickers: model / thinking / flow (TUI /model, ctrl+t cycle, /principle) —— */
+  function closePicker() { const p = $("picker"); p.hidden = true; p.innerHTML = ""; p.dataset.kind = ""; }
+  function openPicker(kind) {
+    const p = $("picker");
+    if (!p.hidden && p.dataset.kind === kind) { closePicker(); return; }
+    closeSlashMenu();
+    p.innerHTML = "";
+    p.dataset.kind = kind;
+    const s = state.session || {};
+    let title = "", options = [];
+    if (kind === "model") {
+      title = "Model";
+      options = state.models.map((m) => ({ value: m.id, label: m.id, sub: [m.provider, m.name].filter(Boolean).join(" · "), cur: m.id === s.model }));
+    } else if (kind === "thinking") {
+      title = "Thinking level";
+      const cur = s.thinking || thinkingLevels()[0];
+      options = thinkingLevels().map((l) => ({ value: l, label: l, cur: l === cur }));
+    } else if (kind === "mode") {
+      title = "Workflow (principle)";
+      const desc = { off: "no phases", auto: "pick per request", lite: "define → synthesize → execute", full: "all phases" };
+      options = ["off", "auto", "lite", "full"].map((m) => ({ value: m, label: m, sub: desc[m], cur: m === s.mode }));
+    }
+    p.appendChild(mk("div", "ptitle", title));
+    if (!options.length) p.appendChild(mk("div", "slash-empty", "nothing to choose"));
+    for (const o of options) {
+      const b = mk("button", o.cur ? "cur" : "");
+      b.type = "button";
+      b.setAttribute("role", "option");
+      b.dataset.value = o.value;
+      const l = mk("span", "", o.label);
+      if (o.sub) { l.appendChild(mk("span", "sub", "  " + o.sub)); }
+      b.appendChild(l);
+      b.onclick = () => { closePicker(); applyPick(kind, o.value); };
+      p.appendChild(b);
+    }
+    p.hidden = false;
+  }
+  async function applyPick(kind, value) {
+    const s = state.session || {};
+    try {
+      if (kind === "model") {
+        const m = state.models.find((x) => x.id === value);
+        const keep = m && m.thinking && m.thinking.includes(s.thinking) ? s.thinking : "";
+        const payload = { action: "model", model: value };
+        if (keep) payload.thinking = keep;
+        await api("/v1/session", { method: "POST", body: JSON.stringify(payload) });
+        setHint("model: " + value);
+      } else if (kind === "thinking") {
+        await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "model", model: s.model, thinking: value }) });
+        setHint("thinking level: " + value);
+      } else if (kind === "mode") {
+        await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "principle", mode: value }) });
+        setHint("workflow mode: " + value);
+      }
+      await refreshSession();
+    } catch (err) {
+      setHint(String(err.message || err), true);
+    }
+  }
+
+  /* —— Create session dialog —— */
+  async function listDirectories(path, prefix) {
     const q = new URLSearchParams();
     if (path) q.set("path", path);
     if (prefix) q.set("prefix", prefix);
     return api("/v1/fs?" + q.toString());
   }
-
   async function loadCreateModels() {
     const sel = $("createModel");
     const cur = sel.value;
@@ -1044,67 +1861,47 @@ async function listDirectories(path, prefix) {
     }
     if (cur) sel.value = cur;
   }
-
   function closePathMenu() {
     const menu = $("pathMenu");
     menu.classList.remove("open");
-    menu.className = (menu.className || "").replace(/\bopen\b/g, "").trim();
     menu.innerHTML = "";
     state.pathMatches = [];
     state.pathCursor = 0;
   }
-
   function openPathMenu(items) {
     const menu = $("pathMenu");
     menu.innerHTML = "";
     state.pathMatches = items || [];
     state.pathCursor = 0;
-    if (!state.pathMatches.length) {
-      closePathMenu();
-      return;
-    }
+    if (!state.pathMatches.length) { closePathMenu(); return; }
     state.pathMatches.forEach((item, i) => {
-      const btn = document.createElement("button");
+      const btn = mk("button", "item", item.name + "/");
       btn.type = "button";
-      btn.className = "item";
       btn.setAttribute("role", "option");
       btn.setAttribute("aria-selected", i === 0 ? "true" : "false");
-      btn.textContent = item.name + "/";
-      btn.onmousedown = (ev) => {
-        ev.preventDefault();
-        applyPathCompletion(item.path);
-      };
+      btn.onmousedown = (ev) => { ev.preventDefault(); applyPathCompletion(item.path); };
       menu.appendChild(btn);
     });
     menu.classList.add("open");
-    menu.className = (menu.className || "").replace(/\bopen\b/g, "").trim() + " open";
   }
-
   function applyPathCompletion(path) {
     $("createWorkspace").value = path.endsWith("/") ? path : path + "/";
     closePathMenu();
     updatePathCompletions();
     $("createWorkspace").focus();
   }
-
   async function updatePathCompletions() {
     if (!state.base) return;
     const raw = $("createWorkspace").value || "";
     let dir = raw;
     let prefix = "";
     if (!raw.endsWith("/") && raw !== "" && raw !== "~") {
-      const idx = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("~"));
       if (raw.includes("/")) {
         const slash = raw.lastIndexOf("/");
         dir = raw.slice(0, slash + 1) || "/";
         prefix = raw.slice(slash + 1);
-      } else if (raw.startsWith("~")) {
-        dir = "~";
-        prefix = raw.slice(1);
-      } else {
-        dir = "";
-        prefix = raw;
-      }
+      } else if (raw.startsWith("~")) { dir = "~"; prefix = raw.slice(1); }
+      else { dir = ""; prefix = raw; }
     }
     try {
       const data = await listDirectories(dir || "~", prefix);
@@ -1117,66 +1914,46 @@ async function listDirectories(path, prefix) {
       $("createHint").textContent = String(err.message || err);
     }
   }
-
   function openCreateDialog() {
-    if (!state.connected) {
-      appendMsg("system", "Connect before creating a session.", "system");
-      return;
-    }
+    if (!state.connected) { setHint("Connect before creating a session.", true); openSettings(); return; }
+    closeSessionsDrawer();
     document.body.classList.add("create-open");
     $("createDialog").hidden = false;
     $("createHint").textContent = "Paths are sandboxed under the desktop home directory.";
     loadCreateModels().catch(() => {});
     listDirectories((($("createWorkspace").value || "~").trim()) || "~").then((data) => {
-      if (data && data.home && !$("createWorkspace").value) {
-        $("createWorkspace").value = data.home + "/";
-      }
+      if (data && data.home && !$("createWorkspace").value) $("createWorkspace").value = data.home + "/";
       $("createHint").textContent = "Listing " + ((data && data.path) || "~");
       return updatePathCompletions();
     }).catch((err) => { $("createHint").textContent = String(err.message || err); });
     setTimeout(() => $("createWorkspace").focus(), 0);
   }
-
   function closeCreateDialog() {
     document.body.classList.remove("create-open");
     $("createDialog").hidden = true;
     closePathMenu();
   }
-
-  async function createSession() {
-    openCreateDialog();
-  }
-
+  async function createSession() { openCreateDialog(); }
   async function confirmCreateSession() {
     const workspace = ($("createWorkspace").value || "").trim();
-    if (!workspace) {
-      $("createHint").textContent = "workspace is required";
-      return;
-    }
+    if (!workspace) { $("createHint").textContent = "workspace is required"; return; }
     const model = ($("createModel").value || "").trim();
     const mode = ($("createMode").value || "off").trim() || "off";
     $("btnCreateConfirm").disabled = true;
     try {
       const body = { workspace, mode };
       if (model) body.model = model;
-      const created = await api("/v1/agents", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const created = await api("/v1/agents", { method: "POST", body: JSON.stringify(body) });
       closeCreateDialog();
-      appendMsg("system", "Created session " + ((created && created.id) || "") + " in " + workspace, "system");
       closeEvents();
       state.historyLoadedFor = null;
       clearTranscript();
+      endTurn();
       const newId = created && created.id;
       if (newId) state.primaryId = newId;
       await refreshAgents();
       if (newId) {
-        state.primaryId = newId;
-        await api("/v1/agents/" + encodeURIComponent(newId) + "/select", {
-          method: "POST",
-          body: "{}",
-        });
+        await api("/v1/agents/" + encodeURIComponent(newId) + "/select", { method: "POST", body: "{}" });
         state.primaryId = newId;
         state.agents = normalizeAgents(state.agents, newId);
         renderSessions();
@@ -1185,10 +1962,11 @@ async function listDirectories(path, prefix) {
       if (bound) openEvents();
       await refreshSession();
       await refreshPermissions();
-      $("hint").textContent = "Session created.";
+      appendSystem("Created session `" + (newId || "") + "` in `" + workspace + "`");
+      setHint("Session created.");
     } catch (err) {
       $("createHint").textContent = String(err.message || err);
-      appendMsg("system", String(err.message || err), "system");
+      appendError(String(err.message || err));
     } finally {
       $("btnCreateConfirm").disabled = !state.connected;
     }
@@ -1196,48 +1974,46 @@ async function listDirectories(path, prefix) {
 
   async function stopSession() {
     try {
-      await api("/v1/session", {
-        method: "POST",
-        body: JSON.stringify({ action: "stop" }),
-      });
+      await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "stop" }) });
       await refreshSession();
       await refreshAgents();
     } catch (err) {
-      appendMsg("system", String(err.message || err), "system");
+      appendError(String(err.message || err));
     }
   }
 
-async function send() {
+  function autosize() {
+    const c = $("composer");
+    if (!c.style) return;
+    c.style.height = "auto";
+    if (c.scrollHeight) c.style.height = Math.min(c.scrollHeight + 2, 200) + "px";
+  }
+
+  async function send() {
     const text = $("composer").value.trim();
     if (!text || state.busy) return;
+    closePicker();
     if (text.startsWith("/")) {
       const handled = await runSlashCommand(text);
-      if (handled) {
-        $("composer").value = "";
-        closeSlashMenu();
-        return;
-      }
+      if (handled) { $("composer").value = ""; autosize(); closeSlashMenu(); return; }
     }
     state.busy = true;
     $("btnSend").disabled = true;
     $("composer").value = "";
+    autosize();
     closeSlashMenu();
-    // Optimistic user card so the transcript updates even if SSE is briefly
-    // subscribed to a pre-bind hub; SSE user_message dedupes via pendingUserText.
+    // Optimistic user bubble; SSE user_message dedupes via pendingUserText.
     state.pendingUserText = text;
-    appendMsg("user", text, "user");
-try {
-      await api("/v1/messages", {
-        method: "POST",
-        body: JSON.stringify({ text }),
-      });
-      // Do not reopen SSE here: BindPrimary subscribers are fixed at subscribe
-      // time, but tearing down EventSource mid-turn can drop early text_delta.
-      // Rebind paths (connect/select/refresh) already call openEvents after select.
+    appendUser(text);
+    beginTurn();
+    setActivity("waiting for response");
+    try {
+      await api("/v1/messages", { method: "POST", body: JSON.stringify({ text }) });
       await refreshSession().catch(() => {});
     } catch (err) {
       state.pendingUserText = "";
-      appendMsg("system", String(err.message || err), "send error");
+      endTurn();
+      appendError("send: " + String(err.message || err));
     } finally {
       state.busy = false;
       $("btnSend").disabled = !state.connected;
@@ -1246,13 +2022,11 @@ try {
 
   /* —— Sessions drawer (mobile) —— */
   function isNarrow() { return narrowMq.matches; }
-
   function syncDrawerChrome() {
     const open = document.body.classList.contains("drawer-open");
     $("btnSessions").setAttribute("aria-expanded", open ? "true" : "false");
     $("btnSessions").setAttribute("aria-label", open ? "Close sessions" : "Open sessions");
-    $("btnCloseSessions").hidden = !isNarrow();
-if (isNarrow()) {
+    if (isNarrow()) {
       $("sidebar").setAttribute("role", "dialog");
       $("sidebar").setAttribute("aria-modal", open ? "true" : "false");
     } else {
@@ -1262,28 +2036,20 @@ if (isNarrow()) {
       $("chat").inert = false;
     }
   }
-
   function openSessionsDrawer() {
     if (!isNarrow()) return;
     document.body.classList.add("drawer-open");
-    // Keep header usable (token / hamburger); only park the transcript.
     $("chat").inert = true;
     syncDrawerChrome();
-    const closeBtn = $("btnCloseSessions");
-    if (closeBtn && !closeBtn.hidden) closeBtn.focus({ preventScroll: true });
+    $("btnCloseSessions").focus({ preventScroll: true });
   }
-
   function closeSessionsDrawer() {
-    if (!document.body.classList.contains("drawer-open")) {
-      syncDrawerChrome();
-      return;
-    }
+    if (!document.body.classList.contains("drawer-open")) { syncDrawerChrome(); return; }
     document.body.classList.remove("drawer-open");
     $("chat").inert = false;
     syncDrawerChrome();
     if (isNarrow()) $("btnSessions").focus({ preventScroll: true });
   }
-
   function toggleSessionsDrawer() {
     if (document.body.classList.contains("drawer-open")) closeSessionsDrawer();
     else openSessionsDrawer();
@@ -1293,92 +2059,59 @@ if (isNarrow()) {
   function parseSlash(value) {
     if (!value.startsWith("/") || value.includes("\n")) return null;
     const body = value.slice(1);
-    if (body.includes(" ")) return null; // only complete the command token
+    if (body.includes(" ")) return null;
     return body.toLowerCase();
   }
-
   function filterSlash(prefix) {
     if (prefix == null) return [];
     return SLASH_COMMANDS.filter((c) => c.name.startsWith(prefix));
   }
-
   function renderSlashMenu() {
     const menu = $("slashMenu");
     const matches = state.slashMatches;
     menu.innerHTML = "";
-    if (!matches.length) {
-      menu.innerHTML = "<div class=\"slash-empty\">No matching commands</div>";
-      return;
-    }
-matches.forEach((c, i) => {
-      const btn = document.createElement("button");
+    if (!matches.length) { menu.innerHTML = "<div class=\"slash-empty\">No matching commands</div>"; return; }
+    matches.forEach((c, i) => {
+      const btn = mk("button", "slash-item");
       btn.type = "button";
-      btn.className = "slash-item";
       btn.setAttribute("role", "option");
       btn.id = "slash-opt-" + i;
       btn.setAttribute("aria-selected", i === state.slashCursor ? "true" : "false");
-      const cmd = document.createElement("span");
-      cmd.className = "cmd";
-      cmd.textContent = "/" + c.name;
-      const desc = document.createElement("span");
-      desc.className = "desc";
-      desc.textContent = c.description;
-      btn.appendChild(cmd);
-      btn.appendChild(desc);
-      btn.onmousedown = (ev) => {
-        // Prevent textarea blur before click applies.
-        ev.preventDefault();
-      };
-      btn.onclick = () => {
-        acceptSlash(i);
-      };
+      btn.appendChild(mk("span", "cmd", "/" + c.name));
+      btn.appendChild(mk("span", "desc", c.description));
+      btn.onmousedown = (ev) => { ev.preventDefault(); };
+      btn.onclick = () => { acceptSlash(i); };
       menu.appendChild(btn);
     });
     const selected = menu.querySelector('[aria-selected="true"]');
     if (selected) selected.scrollIntoView({ block: "nearest" });
   }
-
   function openSlashMenu(matches) {
     state.slashMatches = matches;
     if (state.slashCursor >= matches.length) state.slashCursor = Math.max(0, matches.length - 1);
     if (state.slashCursor < 0) state.slashCursor = 0;
     renderSlashMenu();
-    const menu = $("slashMenu");
-    menu.setAttribute("aria-hidden", "false");
+    $("slashMenu").setAttribute("aria-hidden", "false");
     $("composer").setAttribute("aria-expanded", "true");
     const sel = $("slash-opt-" + state.slashCursor);
     if (sel) $("composer").setAttribute("aria-activedescendant", sel.id);
     else $("composer").removeAttribute("aria-activedescendant");
   }
-
   function closeSlashMenu() {
     state.slashMatches = [];
     state.slashCursor = 0;
-    const menu = $("slashMenu");
-    menu.innerHTML = "";
-    menu.setAttribute("aria-hidden", "true");
+    $("slashMenu").innerHTML = "";
+    $("slashMenu").setAttribute("aria-hidden", "true");
     $("composer").setAttribute("aria-expanded", "false");
     $("composer").removeAttribute("aria-activedescendant");
   }
-
   function updateSlashFromComposer() {
     const prefix = parseSlash($("composer").value);
-    if (prefix == null) {
-      closeSlashMenu();
-      return;
-    }
+    if (prefix == null) { closeSlashMenu(); return; }
     const matches = filterSlash(prefix);
-    if (!matches.length && prefix.length === 0) {
-      openSlashMenu(SLASH_COMMANDS.slice());
-      return;
-    }
-    if (!matches.length) {
-      openSlashMenu([]);
-      return;
-    }
+    if (!matches.length && prefix.length === 0) { openSlashMenu(SLASH_COMMANDS.slice()); return; }
     openSlashMenu(matches);
   }
-
   function acceptSlash(index) {
     const c = state.slashMatches[index];
     if (!c) return;
@@ -1387,145 +2120,118 @@ matches.forEach((c, i) => {
     $("composer").focus();
   }
 
+  // Slash output is rendered Markdown (lists/tables), never raw JSON.
   async function runSlashCommand(raw) {
     const trimmed = raw.trim();
     const m = /^\/([\w-]+)(?:\s+([\s\S]*))?$/.exec(trimmed);
     if (!m) return false;
     const cmd = m[1].toLowerCase();
     const arg = (m[2] || "").trim();
-    const known = SLASH_COMMANDS.some((c) => c.name === cmd);
-    if (!known) return false;
+    if (!SLASH_COMMANDS.some((c) => c.name === cmd)) return false;
+    const fail = (err) => appendError(String((err && err.message) || err));
+    const cell = (v) => String(v == null ? "" : v).replace(/\|/g, "\\|").replace(/\n/g, " ");
 
     switch (cmd) {
-      case "help": {
-        const lines = SLASH_COMMANDS.map((c) => "  /" + c.name + "  " + c.description);
-        appendMsg("system", "Commands:\n" + lines.join("\n"), "system");
+      case "help":
+        appendSystem("Commands:\n" + SLASH_COMMANDS.map((c) => "- `/" + c.name + "`  " + c.description).join("\n"));
         return true;
-      }
       case "new":
         await createSession();
         return true;
       case "resume":
         if (isNarrow()) openSessionsDrawer();
-        else $("sidebar").scrollIntoView({ block: "nearest" });
         await refreshAgents().catch(() => {});
-        appendMsg("system", "Select a session from the list.", "system");
+        setHint("Select a session from the list.");
         return true;
       case "continue":
         try {
           await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "continue" }) });
-          appendMsg("system", "Continue requested.", "system");
-        } catch (err) {
-          appendMsg("system", String(err.message || err), "system");
-        }
+          appendSystem("Continue requested.");
+          beginTurn();
+        } catch (err) { fail(err); }
         return true;
       case "model": {
         try {
           if (!arg) {
-            const data = await api("/v1/models");
-            const lines = ((data && data.models) || []).map((x) => "  " + x.id + (x.name ? "  " + x.name : ""));
+            await refreshModels();
             const cur = state.session && state.session.model ? state.session.model : "(none)";
-            appendMsg("system", "Current model: " + cur + "\nModels:\n" + (lines.join("\n") || "  (none)"), "system");
+            appendSystem("Current model: `" + cur + "`\nModels:\n" + (state.models.map((x) => "- `" + x.id + "`" + (x.name ? " " + x.name : "") + (x.thinking && x.thinking.length ? " · thinking " + x.thinking.join("/") : "")).join("\n") || "- (none)"));
+            openPicker("model");
           } else {
             const parts = arg.split(/\s+/);
             const payload = { action: "model", model: parts[0] };
             if (parts[1]) payload.thinking = parts[1];
             await api("/v1/session", { method: "POST", body: JSON.stringify(payload) });
             await refreshSession();
-            appendMsg("system", "Model switched to " + parts[0], "system");
+            appendSystem("Model switched to `" + parts[0] + "`" + (parts[1] ? " · thinking " + parts[1] : ""));
           }
-        } catch (err) {
-          appendMsg("system", String(err.message || err), "system");
-        }
+        } catch (err) { fail(err); }
         return true;
       }
+      case "thinking":
+        if (arg) await applyPick("thinking", arg);
+        else openPicker("thinking");
+        return true;
       case "principle": {
         try {
-          if (!arg) {
-            const cur = state.session && state.session.mode ? state.session.mode : "(none)";
-            appendMsg("system", "Current mode: " + cur + "\nUse /principle off|auto|lite|full", "system");
-          } else {
+          if (!arg) openPicker("mode");
+          else {
             await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "principle", mode: arg }) });
             await refreshSession();
-            appendMsg("system", "Principle mode set to " + arg, "system");
+            appendSystem("Principle mode set to `" + arg + "`");
           }
-        } catch (err) {
-          appendMsg("system", String(err.message || err), "system");
-        }
+        } catch (err) { fail(err); }
         return true;
       }
       case "tasks": {
         try {
           const data = await api("/v1/tasks");
           const tasks = (data && data.tasks) || [];
-          if (!tasks.length) {
-            appendMsg("system", "no tool tasks recorded", "system");
-          } else {
-            const lines = tasks.map((t, i) => {
-              const dur = t.durationMs ? (" " + (t.durationMs / 1000).toFixed(1) + "s") : "";
-              return String(i + 1).padStart(2, " ") + " " + (t.name || "?") + "  " + (t.status || "") + dur;
-            });
-            appendMsg("system", lines.join("\n"), "system");
-          }
-        } catch (err) {
-          appendMsg("system", String(err.message || err), "system");
-        }
+          if (!tasks.length) appendSystem("No tool tasks recorded.");
+          else appendSystem("| # | tool | status | time |\n|---|---|---|---|\n" + tasks.map((t, i) =>
+            "| " + (i + 1) + " | " + cell(t.name || "?") + " | " + cell(t.status === "done" ? "success" : t.status) + " | " + (t.durationMs ? (t.durationMs / 1000).toFixed(1) + "s" : "") + " |").join("\n"));
+        } catch (err) { fail(err); }
         return true;
       }
       case "agents": {
         try {
           const data = await api("/v1/delegates");
-          appendMsg("system", JSON.stringify((data && data.tasks) || [], null, 2), "system");
-        } catch (err) {
-          appendMsg("system", String(err.message || err), "system");
-        }
+          const tasks = (data && data.tasks) || [];
+          if (!tasks.length) appendSystem("No delegated agents.");
+          else appendSystem("| task | status | model | workspace |\n|---|---|---|---|\n" + tasks.map((t) =>
+            "| `" + cell(t.id) + "` | " + cell(t.status) + " | " + cell(t.model) + " | " + cell(t.workspace) + " |").join("\n"));
+        } catch (err) { fail(err); }
         return true;
       }
       case "permissions":
-        await refreshPermissions().catch((e) => appendMsg("system", String(e.message || e), "system"));
+        await refreshPermissions().catch(fail);
         if (isNarrow()) openSessionsDrawer();
-        appendMsg("system", "Permissions panel refreshed.", "system");
+        setHint("Permissions refreshed.");
         return true;
       case "approve":
       case "deny": {
-        if (!arg) {
-          appendMsg("system", "usage: /" + cmd + " REQUEST_ID", "system");
-          return true;
-        }
+        if (!arg) { appendSystem("usage: `/" + cmd + " REQUEST_ID`"); return true; }
         try {
-          await api("/v1/permissions/" + encodeURIComponent(arg), {
-            method: "POST",
-            body: JSON.stringify({ approve: cmd === "approve" }),
-          });
+          await api("/v1/permissions/" + encodeURIComponent(arg), { method: "POST", body: JSON.stringify({ approve: cmd === "approve" }) });
           await refreshPermissions();
-          appendMsg("system", "permission decision recorded", "system");
-        } catch (err) {
-          appendMsg("system", String(err.message || err), "system");
-        }
+          appendSystem((cmd === "approve" ? "Approved" : "Denied") + " permission #" + arg);
+        } catch (err) { fail(err); }
         return true;
       }
       case "revoke": {
         const parts = arg.split(/\s+/).filter(Boolean);
-        if (parts.length !== 2) {
-          appendMsg("system", "usage: /revoke TASK CAPABILITY", "system");
-          return true;
-        }
+        if (parts.length !== 2) { appendSystem("usage: `/revoke TASK CAPABILITY`"); return true; }
         try {
-          await api("/v1/delegates", {
-            method: "POST",
-            body: JSON.stringify({ action: "revoke", taskId: parts[0], capability: parts[1] }),
-          });
-          appendMsg("system", "permission revoked", "system");
-        } catch (err) {
-          appendMsg("system", String(err.message || err), "system");
-        }
+          await api("/v1/delegates", { method: "POST", body: JSON.stringify({ action: "revoke", taskId: parts[0], capability: parts[1] }) });
+          appendSystem("Revoked `" + parts[1] + "` from `" + parts[0] + "`");
+        } catch (err) { fail(err); }
         return true;
       }
       case "settings": {
         try {
           if (!arg) {
             const data = await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "settings" }) });
-            appendMsg("system", "parallel=" + data.parallel + " compactionThreshold=" + data.compactionThreshold, "system");
+            appendSystem("Session settings: compaction threshold " + data.compactionThreshold + ", delegate parallel " + data.parallel + "\n(parallel=" + data.parallel + ")");
           } else {
             const parts = arg.split(/\s+/);
             const key = parts[0];
@@ -1533,45 +2239,37 @@ matches.forEach((c, i) => {
             const payload = { action: "settings" };
             if (key === "delegate-parallel" || key === "parallel") payload.parallel = Number(val);
             else if (key === "compaction-threshold" || key === "compactionThreshold") payload.compactionThreshold = Number(val);
-            else {
-              appendMsg("system", "usage: /settings [delegate-parallel N|compaction-threshold R]", "system");
-              return true;
-            }
+            else { appendSystem("usage: `/settings [delegate-parallel N|compaction-threshold R]`"); return true; }
             const data = await api("/v1/session", { method: "POST", body: JSON.stringify(payload) });
-            appendMsg("system", "settings updated: " + JSON.stringify(data), "system");
+            appendSystem("Settings updated: " + Object.keys(data || {}).filter((k) => k !== "ok" && k !== "action").map((k) => k + " " + data[k]).join(", "));
           }
-        } catch (err) {
-          appendMsg("system", String(err.message || err), "system");
-        }
+        } catch (err) { fail(err); }
         return true;
       }
       case "compact":
         try {
           const data = await api("/v1/session", { method: "POST", body: JSON.stringify({ action: "compact" }) });
-          appendMsg("system", (data && data.message) || "Compaction requested", "system");
-        } catch (err) {
-          appendMsg("system", String(err.message || err), "system");
-        }
+          appendSystem((data && data.message) || "Compaction requested");
+        } catch (err) { fail(err); }
         return true;
       case "status": {
         const s = state.session;
-        const parts = [
-          "connection: " + (state.connected ? "live" : "offline"),
-          "relay: " + ($("relayURL").value.trim() || "(none)"),
-          "base: " + (state.base || "(none)"),
-          "session: " + (s && s.id ? s.id : "(none)"),
-          "workspace: " + (s && s.workspace ? s.workspace : "n/a"),
-          "state: " + (s && (s.state || s.status) ? (s.state || s.status) : "n/a"),
-          "model: " + (s && s.model ? s.model : "n/a"),
-          "mode: " + (s && s.mode ? s.mode : "n/a"),
-          "agents: " + state.agents.length,
-        ];
-        appendMsg("system", parts.join("\n"), "system");
+        const wf = s && s.workflow;
+        appendSystem([
+          "- connection: " + (state.connected ? "live" : "offline"),
+          "- relay: " + ($("relayURL").value.trim() || "(none)"),
+          "- session: `" + (s && s.id ? s.id : "(none)") + "`",
+          "- workspace: `" + (s && s.workspace ? s.workspace : "n/a") + "`",
+          "- state: " + (s && (s.state || s.status) ? (s.state || s.status) : "n/a") + (s && s.busy ? " (busy)" : ""),
+          "- model: " + (s && s.model ? s.model : "n/a") + " · thinking " + (s && s.thinking ? s.thinking : "default"),
+          "- workflow: " + (s && s.mode ? s.mode : "n/a") + (wf ? " · " + (wf.complete ? "complete" : "phase: " + wf.current) : ""),
+          "- sessions: " + state.agents.length,
+        ].join("\n"));
         return true;
       }
       case "pwd": {
         const s = state.session;
-        appendMsg("system", "workspace: " + ((s && s.workspace) || "(none)") + "  (session " + ((s && s.id) || "none") + ")", "system");
+        appendSystem("workspace: `" + ((s && s.workspace) || "(none)") + "`  (session `" + ((s && s.id) || "none") + "`)");
         return true;
       }
       case "stop":
@@ -1582,52 +2280,41 @@ matches.forEach((c, i) => {
     }
   }
 
-  /* —— Wiring  /* —— Wiring —— */
+  /* —— Wiring —— */
   $("btnConnect").onclick = connect;
   $("btnDisconnect").onclick = disconnect;
+  $("btnSettings").onclick = openSettings;
+  $("btnSettingsClose").onclick = closeSettings;
+  $("settingsDialog").addEventListener("click", (ev) => { if (ev.target === $("settingsDialog")) closeSettings(); });
   $("btnSend").onclick = send;
+  $("btnStopTurn").onclick = () => runSlashCommand("/stop");
   $("btnNew").onclick = createSession;
   $("btnCreateCancel").onclick = closeCreateDialog;
   $("btnCreateConfirm").onclick = confirmCreateSession;
   $("createWorkspace").addEventListener("input", () => { updatePathCompletions().catch(() => {}); });
   $("createWorkspace").addEventListener("keydown", (ev) => {
     const open = $("pathMenu").classList.contains("open");
-    if (!open) {
-      if (ev.key === "Escape") { closeCreateDialog(); }
-      return;
-    }
-    if (ev.key === "ArrowDown") {
-      ev.preventDefault();
-      state.pathCursor = Math.min(state.pathCursor + 1, state.pathMatches.length - 1);
-    } else if (ev.key === "ArrowUp") {
-      ev.preventDefault();
-      state.pathCursor = Math.max(state.pathCursor - 1, 0);
-    } else if (ev.key === "Enter" && state.pathMatches[state.pathCursor]) {
-      ev.preventDefault();
-      applyPathCompletion(state.pathMatches[state.pathCursor].path);
-      return;
-    } else if (ev.key === "Escape") {
-      ev.preventDefault();
-      closePathMenu();
-      return;
-    } else {
-      return;
-    }
+    if (!open) { if (ev.key === "Escape") closeCreateDialog(); return; }
+    if (ev.key === "ArrowDown") { ev.preventDefault(); state.pathCursor = Math.min(state.pathCursor + 1, state.pathMatches.length - 1); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); state.pathCursor = Math.max(state.pathCursor - 1, 0); }
+    else if (ev.key === "Enter" && state.pathMatches[state.pathCursor]) { ev.preventDefault(); applyPathCompletion(state.pathMatches[state.pathCursor].path); return; }
+    else if (ev.key === "Escape") { ev.preventDefault(); closePathMenu(); return; }
+    else return;
     [...$("pathMenu").children].forEach((el, i) => el.setAttribute("aria-selected", i === state.pathCursor ? "true" : "false"));
   });
   $("createDialog").addEventListener("click", (ev) => { if (ev.target === $("createDialog")) closeCreateDialog(); });
 
   $("btnStop").onclick = stopSession;
-$("btnRefresh").onclick = () => {
+  $("btnRefresh").onclick = () => {
     refreshAgents()
       .then(() => ensurePrimarySelected())
       .then((bound) => {
-        // Bound-only: do not require state.connected (AC3 hole after unbound connect).
         if (bound) openEvents();
-        return Promise.all([refreshSession(), refreshPermissions()]);
+        return Promise.all([refreshModels(), refreshSession(), refreshPermissions()]);
       })
-      .catch((e) => appendMsg("system", String(e.message || e), "system"));
+      .catch(appendErrorFromPromise);
   };
+  function appendErrorFromPromise(e) { appendError(String((e && e.message) || e)); }
   $("btnRefreshAgents").onclick = () => {
     refreshAgents()
       .then(() => ensurePrimarySelected())
@@ -1635,44 +2322,32 @@ $("btnRefresh").onclick = () => {
         if (bound) openEvents();
         return refreshSession();
       })
-      .catch((e) => appendMsg("system", String(e.message || e), "system"));
+      .catch(appendErrorFromPromise);
   };
-  $("btnRefreshPerms").onclick = () => refreshPermissions().catch((e) => appendMsg("system", String(e.message || e), "permissions"));
+  $("btnRefreshPerms").onclick = () => refreshPermissions().catch(appendErrorFromPromise);
   $("btnSessions").onclick = toggleSessionsDrawer;
   $("btnCloseSessions").onclick = closeSessionsDrawer;
   $("drawerBackdrop").onclick = closeSessionsDrawer;
+  $("chipModel").onclick = () => openPicker("model");
+  $("chipThinking").onclick = () => openPicker("thinking");
+  $("chipMode").onclick = () => openPicker("mode");
 
-  $("composer").addEventListener("input", updateSlashFromComposer);
-
+  transcript().addEventListener("scroll", onTranscriptScroll, { passive: true });
+  $("composer").addEventListener("input", () => { autosize(); updateSlashFromComposer(); });
   $("composer").addEventListener("keydown", (ev) => {
     const menuOpen = $("slashMenu").getAttribute("aria-hidden") === "false";
     if (menuOpen && state.slashMatches.length) {
-      if (ev.key === "ArrowDown") {
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
         ev.preventDefault();
-        state.slashCursor = (state.slashCursor + 1) % state.slashMatches.length;
+        const d = ev.key === "ArrowDown" ? 1 : -1;
+        state.slashCursor = (state.slashCursor + d + state.slashMatches.length) % state.slashMatches.length;
         renderSlashMenu();
         $("composer").setAttribute("aria-activedescendant", "slash-opt-" + state.slashCursor);
         return;
       }
-      if (ev.key === "ArrowUp") {
-        ev.preventDefault();
-        state.slashCursor = (state.slashCursor - 1 + state.slashMatches.length) % state.slashMatches.length;
-        renderSlashMenu();
-        $("composer").setAttribute("aria-activedescendant", "slash-opt-" + state.slashCursor);
-        return;
-      }
-      if (ev.key === "Tab") {
-        ev.preventDefault();
-        acceptSlash(state.slashCursor);
-        return;
-      }
-      if (ev.key === "Escape") {
-        ev.preventDefault();
-        closeSlashMenu();
-        return;
-      }
+      if (ev.key === "Tab") { ev.preventDefault(); acceptSlash(state.slashCursor); return; }
+      if (ev.key === "Escape") { ev.preventDefault(); closeSlashMenu(); return; }
       if (ev.key === "Enter" && !ev.shiftKey) {
-        // Accept highlighted command into the composer, then run it.
         ev.preventDefault();
         const c = state.slashMatches[state.slashCursor];
         if (c) $("composer").value = "/" + c.name;
@@ -1681,23 +2356,25 @@ $("btnRefresh").onclick = () => {
         return;
       }
     } else if (ev.key === "Escape") {
-      if (document.body.classList.contains("drawer-open")) {
-        ev.preventDefault();
-        closeSessionsDrawer();
-        return;
-      }
+      closePicker();
+      if (document.body.classList.contains("drawer-open")) { ev.preventDefault(); closeSessionsDrawer(); return; }
     }
-    if (ev.key === "Enter" && !ev.shiftKey) {
+    // Enter sends on desktop; on touch keyboards Enter inserts a newline (send button).
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && !isNarrow()) {
       ev.preventDefault();
       send();
     }
   });
 
   document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape" && document.body.classList.contains("drawer-open")) {
-      ev.preventDefault();
-      closeSessionsDrawer();
-    }
+    if (ev.key !== "Escape") return;
+    if (!$("settingsDialog").hidden) { closeSettings(); return; }
+    if (document.body.classList.contains("drawer-open")) { ev.preventDefault(); closeSessionsDrawer(); }
+  });
+  document.addEventListener("click", (ev) => {
+    const p = $("picker");
+    if (p.hidden || !ev.target || !ev.target.closest) return;
+    if (!ev.target.closest("#picker") && !ev.target.closest(".chip") && !ev.target.closest("#composer")) closePicker();
   });
 
   function onViewportChange() {
@@ -1707,26 +2384,26 @@ $("btnRefresh").onclick = () => {
   if (typeof narrowMq.addEventListener === "function") narrowMq.addEventListener("change", onViewportChange);
   else if (typeof narrowMq.addListener === "function") narrowMq.addListener(onViewportChange);
 
-const savedURL = localStorage.getItem("firstrule.relayURL") || "";
-  $("relayURL").value = savedURL || defaultRelayOrigin();
-  const savedToken = localStorage.getItem("firstrule.relay.token");
+  const savedURL = localStorage.getItem(LS.url) || "";
+  $("relayURL").value = savedURL || $("relayURL").value || defaultRelayOrigin();
+  const savedToken = localStorage.getItem(LS.token);
   if (savedToken) $("token").value = savedToken;
+  $("autoConnect").checked = localStorage.getItem(LS.auto) !== "";
   $("relayURL").addEventListener("change", () => {
     const origin = normalizeRelayOrigin($("relayURL").value);
-    if (origin) {
-      $("relayURL").value = origin;
-      localStorage.setItem("firstrule.relayURL", origin);
-    } else {
-      localStorage.setItem("firstrule.relayURL", $("relayURL").value.trim());
-    }
+    if (origin) $("relayURL").value = origin;
+    saveSettings();
   });
-  $("token").addEventListener("change", () => {
-    localStorage.setItem("firstrule.relay.token", $("token").value.trim());
-  });
+  $("token").addEventListener("change", saveSettings);
+  $("autoConnect").addEventListener("change", saveSettings);
 
   setConnected(false);
   syncDrawerChrome();
   setStatus(null, "offline");
+  updateSessionLabel();
+  if (savedToken && $("autoConnect").checked) connect();
+  else if (!savedToken) { setHint("Open ⚙ settings to connect."); openSettings(); }
+  else setHint("Ready. Open ⚙ settings and Connect.");
 })();
 </script>
 </body>
