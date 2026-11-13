@@ -400,6 +400,14 @@ def run(page, base, label, mobile, shots):
         vh1 = page.viewport_size["height"] - 300
         check("keyboard: top bar stays, transcript shrinks", hy1 == hy0 and tr1 < tr - 250 and cb1["y"] + cb1["height"] <= vh1 + 2, (hy0, hy1, tr, tr1, cb1, vh1))
         check("keyboard: page not shifted", page.evaluate("scrollY") == 0)
+        sb = page.locator("#btnSend").bounding_box()
+        check("keyboard: send button visible above keyboard", sb is not None and sb["y"] >= 0 and sb["y"] + sb["height"] <= vh1 + 2, (sb, vh1))
+        n_u = page.locator(".msg.user").count()
+        page.fill("#composer", "tap send")
+        page.locator("#btnSend").tap()
+        page.wait_for_function(f"document.querySelectorAll('.msg.user').length > {n_u}", timeout=5000)
+        check("keyboard: tapping send sends", page.locator(".msg.user .body", has_text="tap send").count() == 1)
+        page.wait_for_function("document.getElementById('btnStopTurn').hidden", timeout=5000)
         page.evaluate("""() => { document.documentElement.style.setProperty('--vvh', innerHeight + 'px'); }""")
     else:
         check("sidebar visible on desktop", page.locator("#sidebar").is_visible() and page.locator("#sessions .item.active").count() == 1)
