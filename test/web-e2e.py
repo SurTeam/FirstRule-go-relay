@@ -36,7 +36,7 @@ sub_lock = threading.Lock()
 
 MODELS = [
     {"id": "demo-pro", "name": "Demo Pro", "provider": "demo", "thinking": ["low", "medium", "high"]},
-    {"id": "demo-mini", "name": "Demo Mini", "provider": "demo"},
+    {"id": "demo-mini", "name": "Demo Mini", "provider": "demo", "default": True},
 ]
 
 REPLY_MD = """Here is the **plan** with `code` and *emphasis*:
@@ -152,6 +152,9 @@ class H(BaseHTTPRequestHandler):
             ], "tasks": []})
         if p == "/v1/permissions":
             return self.send_json(200, [])
+        if p == "/v1/fs":
+            dirs = [{"name": f"very-long-directory-name-number-{i:02d}-for-overflow", "path": f"/home/demo/very-long-directory-name-number-{i:02d}-for-overflow"} for i in range(60)]
+            return self.send_json(200, {"path": "/home/demo", "home": "/home/demo", "directories": dirs})
         if p == "/v1/delegates":
             return self.send_json(200, {"tasks": [{"id": "child-1", "status": "running", "model": "demo-mini", "workspace": "/home/demo/proj"}]})
         if p == "/v1/events":
@@ -220,7 +223,7 @@ def check(name, ok, detail=""):
 
 
 def run(page, base, label, mobile, shots):
-    state.update(primary="", model="demo-pro", thinking="medium", mode="lite")
+    state.update(primary="", model="demo-pro", thinking="", mode="lite")
     print(f"[{label}]")
     page.goto(base + "/web/")
     # First visit: settings page opens instead of a top-bar token row.
@@ -239,13 +242,14 @@ def run(page, base, label, mobile, shots):
 
     # Chips + workflow around the composer.
     check("model chip", page.inner_text("#chipModelV") == "demo-pro")
-    check("thinking chip", page.inner_text("#chipThinkingV") == "medium", page.inner_text("#chipThinkingV"))
+    check("thinking chip defaults to lowest level like TUI", page.inner_text("#chipThinkingV") == "low", page.inner_text("#chipThinkingV"))
     check("flow chip", page.inner_text("#chipModeV") == "lite")
     check("workflow phase track", page.locator("#phaseTrack .phase.cur", has_text="synthesize").count() == 1
           and page.locator("#phaseTrack .phase.done", has_text="define").count() == 1)
     page.click("#chipThinking")
     check("thinking picker lists levels", page.locator("#picker button").all_inner_texts() == ["low", "medium", "high"],
           page.locator("#picker button").all_inner_texts())
+    check("thinking picker marks effective level", page.locator("#picker button.cur").inner_text() == "low")
     page.click("#picker button[data-value=high]")
     page.wait_for_function("document.getElementById('chipThinkingV').textContent === 'high'", timeout=3000)
     check("thinking change posted", ("/v1/session", {"action": "model", "model": "demo-pro", "thinking": "high"}) in state["posts"])
@@ -265,8 +269,15 @@ def run(page, base, label, mobile, shots):
     check("all form controls >= 16px", small == [], small)
     check("no zoom on input focus", scale0 == scale1 == 1 and fs >= 16 and "maximum-scale=1" in vp, (scale0, scale1, fs, vp))
 
+    page.fill("#composer", "")
+    page.click("#composer")
+    page.keyboard.type("run the")
+    page.keyboard.press("Enter")
+    page.keyboard.type("plan")
+    n_user = page.locator(".msg.user").count()
+    check("Enter inserts newline, does not send", page.input_value("#composer") == "run the\nplan" and page.locator(".msg.user").count() == n_user)
     page.fill("#composer", "run the plan")
-    page.click("#btnSend")
+    page.keyboard.press("Meta+Enter")
     page.wait_for_selector(".msg.summary", timeout=5000)
     page.wait_for_timeout(150)
 
@@ -317,7 +328,7 @@ def run(page, base, label, mobile, shots):
     # Non-streamed reply (only in turn_done.turn) must still appear once.
     n_sum = page.locator(".msg.summary").count()
     page.fill("#composer", "plain reply")
-    page.click("#btnSend")
+    page.keyboard.press("Control+Enter")
     page.wait_for_function(f"document.querySelectorAll('.msg.summary').length > {n_sum}", timeout=5000)
     check("non-streamed reply shown once", page.locator(".msg.agent strong", has_text="answer").count() == 1)
     check("streamed reply still not duplicated", page.locator(".msg.agent", has_text="Here is the").count() == 1)
@@ -329,6 +340,35 @@ def run(page, base, label, mobile, shots):
     page.wait_for_selector("table.md-table td code:has-text('child-1')", timeout=3000)
     txt = page.inner_text("#transcript")
     check("no raw JSON in transcript", '{"' not in txt and '"status"' not in txt)
+
+    # Active session: background tint, no outline ring.
+    act = page.locator("#sessions .item.active")
+    oc = page.evaluate("(() => { const e = document.querySelector('#sessions .item.active'); const c = getComputedStyle(e); return [c.outlineStyle, c.outlineWidth, c.boxShadow]; })()")
+    check("active session has no outline ring", oc[0] == "none" or oc[1] == "0px", oc)
+
+    # Create dialog: long directory list stays inside the viewport.
+    if mobile:
+        page.click("#btnSessions")
+        page.wait_for_timeout(250)
+    page.click("#btnNew")
+    page.wait_for_selector("#pathMenu.open .item", timeout=5000)
+    vh = page.viewport_size["height"]
+    pb = page.locator("#createDialog .panel").bounding_box()
+    mb = page.locator("#pathMenu").bounding_box()
+    check("create panel fits viewport", pb["y"] >= 0 and pb["y"] + pb["height"] <= vh + 1, (pb, vh))
+    check("directory list is bounded and scrolls", mb["height"] <= 201 and page.evaluate("document.getElementById('pathMenu').scrollHeight > document.getElementById('pathMenu').clientHeight"), mb)
+    check("create defaults: TUI model + auto flow", page.input_value("#createModel") == "demo-mini" and page.input_value("#createMode") == "auto",
+          (page.input_value("#createModel"), page.input_value("#createMode")))
+    cb = page.locator("#btnCreateConfirm").bounding_box()
+    check("create buttons reachable on screen", cb["y"] + cb["height"] <= vh + 1, cb)
+    create_btn = page.evaluate("(() => { const c = getComputedStyle(document.getElementById('btnCreateCancel')); return [c.backgroundColor, c.borderRadius, c.minHeight, c.fontSize]; })()")
+    page.click("#btnCreateCancel")
+    page.click("#btnSettings")
+    settings_btn = page.evaluate("(() => { const c = getComputedStyle(document.getElementById('btnSettingsClose')); return [c.backgroundColor, c.borderRadius, c.minHeight, c.fontSize]; })()")
+    same_row = page.evaluate("document.getElementById('btnSettingsClose').parentElement.className === document.getElementById('btnCreateCancel').parentElement.className")
+    check("settings and create buttons share one style", create_btn == settings_btn and same_row, (create_btn, settings_btn))
+    page.click("#btnSettingsClose")
+    page.wait_for_timeout(300)  # drawer slide-out transition after New
 
     # Sidebar: drawer on mobile, static on desktop.
     if mobile:
@@ -344,6 +384,23 @@ def run(page, base, label, mobile, shots):
         check("thin top bar on mobile", hh <= 56, hh)
         tr = page.locator("#transcript").bounding_box()["height"]
         check("transcript dominates viewport", tr > page.viewport_size["height"] * 0.5, tr)
+        # Simulated keyboard: visual viewport loses 300px.
+        hy0 = page.locator("header").bounding_box()["y"]
+        cy0 = page.locator(".composer-wrap").bounding_box()
+        page.evaluate("""() => {
+          const h = innerHeight - 300;
+          Object.defineProperty(window, 'visualViewport', { configurable: true, value: Object.assign(new EventTarget(), { height: h, width: innerWidth, scale: 1, offsetTop: 0 }) });
+          document.documentElement.style.setProperty('--vvh', h + 'px');
+          window.dispatchEvent(new Event('resize'));
+        }""")
+        page.wait_for_timeout(100)
+        hy1 = page.locator("header").bounding_box()["y"]
+        tr1 = page.locator("#transcript").bounding_box()["height"]
+        cb1 = page.locator(".composer-wrap").bounding_box()
+        vh1 = page.viewport_size["height"] - 300
+        check("keyboard: top bar stays, transcript shrinks", hy1 == hy0 and tr1 < tr - 250 and cb1["y"] + cb1["height"] <= vh1 + 2, (hy0, hy1, tr, tr1, cb1, vh1))
+        check("keyboard: page not shifted", page.evaluate("scrollY") == 0)
+        page.evaluate("""() => { document.documentElement.style.setProperty('--vvh', innerHeight + 'px'); }""")
     else:
         check("sidebar visible on desktop", page.locator("#sidebar").is_visible() and page.locator("#sessions .item.active").count() == 1)
     check("page itself does not scroll", page.evaluate("document.scrollingElement.scrollHeight <= innerHeight + 1"))
@@ -358,6 +415,9 @@ def run(page, base, label, mobile, shots):
     page.click("#btnSettings")
     check("settings reachable via ⚙", page.locator("#settingsDialog").is_visible() and page.input_value("#token") == TOKEN)
     page.click("#btnSettingsClose")
+    hb = page.evaluate("getComputedStyle(document.querySelector('header')).backgroundColor")
+    tw = page.evaluate("getComputedStyle(document.getElementById('transcript')).willChange")
+    check("header opaque, no layer promotion on scroller", hb not in ("rgba(0, 0, 0, 0)", "transparent") and tw == "auto", (hb, tw))
 
 
 def main():

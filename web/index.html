@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <!-- maximum-scale=1 + 16px form controls: iOS must not zoom the page on input focus. -->
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#0b0d10" />
 <title>FirstRule</title>
 <style>
@@ -90,7 +90,7 @@ input, textarea, select { min-height: var(--touch); }
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
-  height: 100dvh;
+  height: var(--vvh, 100dvh);
   max-width: 1400px;
   margin: 0 auto;
   padding: max(6px, var(--safe-t)) max(6px, var(--safe-r)) 0 max(6px, var(--safe-l));
@@ -105,6 +105,10 @@ header {
   align-items: center;
   min-width: 0;
   padding: 2px 4px;
+  background: var(--bg);
+  position: relative;
+  z-index: 5;
+  isolation: isolate;
 }
 header .title { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 header h1 { margin: 0; font-size: 15px; white-space: nowrap; }
@@ -173,7 +177,9 @@ aside h2, .settings h2 {
   display: block;
   width: 100%;
 }
-.item.active { outline: 1px solid var(--accent); background: #1a2433; }
+.item.active { background: #1e2a3d; border-color: #2f5a8f; }
+.item:focus { outline: none; }
+.item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .item .ws { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .id { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
 .item .sub { color: var(--muted); font-size: 12px; margin-top: 2px; display: flex; gap: 6px; align-items: center; }
@@ -194,7 +200,6 @@ aside h2, .settings h2 {
   gap: 10px;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  will-change: scroll-position;
   overflow-anchor: none;
 }
 /* —— Transcript cards (see docs/subsystems/web-client.md) —— */
@@ -434,7 +439,8 @@ aside h2, .settings h2 {
 /* Settings + create dialogs (full-screen sheet on mobile). */
 .sheet {
   position: fixed;
-  inset: 0;
+  top: 0; left: 0; right: 0;
+  height: var(--vvh, 100dvh);
   z-index: 60;
   background: rgb(0 0 0 / 0.55);
   display: flex;
@@ -445,7 +451,9 @@ aside h2, .settings h2 {
 .sheet .panel {
   width: min(480px, 100%);
   max-height: 100%;
-  overflow: auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -455,11 +463,19 @@ aside h2, .settings h2 {
 }
 .sheet h3 { margin: 0; font-size: 16px; }
 .sheet label { font-size: 12px; color: var(--muted); }
-.sheet input, .sheet select { width: 100%; }
+.sheet input, .sheet select { width: 100%; min-width: 0; }
+/* Shared dialog action row: hint on its own line, buttons right-aligned and equal height. */
+.sheet .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 4px; }
+.sheet .actions .hint { flex: 1 0 100%; font-size: 12px; color: var(--muted); min-height: 1em; }
+.sheet .actions button { min-width: 96px; min-height: var(--touch); }
+.sheet .actions button.ghost { background: var(--panel-2); border-color: var(--border); }
+.sheet .check { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text); }
+.sheet .check input { width: auto; min-height: 0; }
+@media (max-width: 899px) { .sheet .actions button { flex: 1; } }
 .path-wrap { position: relative; }
-#pathMenu { display: none; flex-direction: column; gap: 2px; max-height: 30dvh; overflow: auto; margin-top: 4px; }
+#pathMenu { display: none; flex-direction: column; gap: 2px; max-height: min(28dvh, 200px); overflow-y: auto; overscroll-behavior: contain; margin-top: 4px; border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
 #pathMenu.open { display: flex; }
-#pathMenu .item { min-height: 36px; padding: 6px 10px; font-family: var(--mono); font-size: 13px; }
+#pathMenu .item { min-height: 34px; padding: 6px 10px; font-family: var(--mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
 
 .drawer-backdrop {
   display: none;
@@ -550,7 +566,7 @@ body.drawer-open .drawer-backdrop { display: block; }
           <span id="hint" class="dim grow">Open ⚙ settings to connect.</span>
         </div>
         <div class="composer-row">
-          <textarea id="composer" placeholder="Message FirstRule…  (/ for commands)" rows="1" disabled aria-autocomplete="list" aria-controls="slashMenu" aria-expanded="false"></textarea>
+          <textarea id="composer" placeholder="Message FirstRule…  (/ commands · ⌘↩ send)" rows="1" disabled aria-autocomplete="list" aria-controls="slashMenu" aria-expanded="false"></textarea>
           <button type="button" id="btnStopTurn" class="danger" hidden aria-label="Interrupt">■</button>
           <button type="button" id="btnSend" class="primary" disabled aria-label="Send">➤</button>
         </div>
@@ -571,10 +587,10 @@ body.drawer-open .drawer-backdrop { display: block; }
       <input id="relayURL" type="url" inputmode="url" placeholder="https://relay.example" autocomplete="url" spellcheck="false" />
       <label for="token">Connect token</label>
       <input id="token" type="password" placeholder="Connect token" autocomplete="off" spellcheck="false" />
-      <label class="row"><input id="autoConnect" type="checkbox" style="width:auto;min-height:0" /> <span>Connect automatically on open</span></label>
+      <label class="check"><input id="autoConnect" type="checkbox" /> <span>Connect automatically on open</span></label>
       <div class="dim" style="font-size:12px">Saved in this browser only (localStorage).</div>
-      <div class="row">
-        <span class="grow dim" id="settingsHint"></span>
+      <div class="actions">
+        <span class="hint" id="settingsHint"></span>
         <button type="button" id="btnDisconnect" class="ghost" disabled>Disconnect</button>
         <button type="button" id="btnSettingsClose" class="ghost">Close</button>
         <button type="button" id="btnConnect" class="primary">Connect</button>
@@ -590,17 +606,17 @@ body.drawer-open .drawer-backdrop { display: block; }
         <input id="createWorkspace" type="text" spellcheck="false" autocomplete="off" placeholder="~/Projects/my-app" />
         <div id="pathMenu" role="listbox" aria-label="Directory completions"></div>
       </div>
-      <label for="createModel">Model (optional)</label>
+      <label for="createModel">Model</label>
       <select id="createModel"><option value="">default</option></select>
-      <label for="createMode">Principle mode</label>
+      <label for="createMode">Flow (principle mode)</label>
       <select id="createMode">
+        <option value="auto" selected>auto</option>
         <option value="off">off</option>
-        <option value="auto">auto</option>
         <option value="lite">lite</option>
         <option value="full">full</option>
       </select>
-      <div class="row">
-        <span class="dim grow" id="createHint">Paths are sandboxed under the desktop home directory.</span>
+      <div class="actions">
+        <span class="hint" id="createHint">Paths are sandboxed under the desktop home directory.</span>
         <button type="button" id="btnCreateCancel" class="ghost">Cancel</button>
         <button type="button" id="btnCreateConfirm" class="primary">Create</button>
       </div>
@@ -1294,6 +1310,12 @@ body.drawer-open .drawer-backdrop { display: block; }
     if (state.connected) setStatus(true, "live");
   }
 
+  function effectiveThinking() {
+    const s = state.session;
+    if (s && s.thinking) return s.thinking;
+    const levels = thinkingLevels();
+    return levels.length ? levels[0] : "off";
+  }
   function thinkingLevels() {
     const id = state.session && state.session.model;
     const m = state.models.find((x) => x.id === id);
@@ -1303,7 +1325,8 @@ body.drawer-open .drawer-backdrop { display: block; }
     const s = state.session;
     $("chipModelV").textContent = (s && s.model) || "—";
     const levels = thinkingLevels();
-    $("chipThinkingV").textContent = (s && s.thinking) || (levels.length ? levels[0] : "off");
+    // Same as config.Model.EffectiveThinking: unset → lowest configured level.
+    $("chipThinkingV").textContent = effectiveThinking();
     $("chipThinking").disabled = !s || !levels.length;
     $("chipModeV").textContent = (s && s.mode) || "—";
     $("chipModel").disabled = !s;
@@ -1792,7 +1815,7 @@ body.drawer-open .drawer-backdrop { display: block; }
       options = state.models.map((m) => ({ value: m.id, label: m.id, sub: [m.provider, m.name].filter(Boolean).join(" · "), cur: m.id === s.model }));
     } else if (kind === "thinking") {
       title = "Thinking level";
-      const cur = s.thinking || thinkingLevels()[0];
+      const cur = effectiveThinking();
       options = thinkingLevels().map((l) => ({ value: l, label: l, cur: l === cur }));
     } else if (kind === "mode") {
       title = "Workflow (principle)";
@@ -1848,14 +1871,18 @@ body.drawer-open .drawer-backdrop { display: block; }
     const sel = $("createModel");
     const cur = sel.value;
     sel.innerHTML = '<option value="">default</option>';
+    let def = "";
     try {
       const data = await api("/v1/models");
       for (const m of (data && data.models) || []) {
         const opt = document.createElement("option");
         opt.value = m.id;
-        opt.textContent = (m.name ? m.name + " · " : "") + m.id;
+        opt.textContent = (m.name ? m.name + " · " : "") + m.id + (m.default ? "  (default)" : "");
         sel.appendChild(opt);
+        if (m.default) def = m.id;
       }
+      // Preselect the TUI default model (settings.json defaultModel).
+      if (!cur && def) sel.value = def;
     } catch (err) {
       $("createHint").textContent = "models: " + (err.message || err);
     }
@@ -2347,7 +2374,7 @@ body.drawer-open .drawer-backdrop { display: block; }
       }
       if (ev.key === "Tab") { ev.preventDefault(); acceptSlash(state.slashCursor); return; }
       if (ev.key === "Escape") { ev.preventDefault(); closeSlashMenu(); return; }
-      if (ev.key === "Enter" && !ev.shiftKey) {
+      if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
         ev.preventDefault();
         const c = state.slashMatches[state.slashCursor];
         if (c) $("composer").value = "/" + c.name;
@@ -2359,8 +2386,8 @@ body.drawer-open .drawer-backdrop { display: block; }
       closePicker();
       if (document.body.classList.contains("drawer-open")) { ev.preventDefault(); closeSessionsDrawer(); return; }
     }
-    // Enter sends on desktop; on touch keyboards Enter inserts a newline (send button).
-    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && !isNarrow()) {
+    // Enter keeps its newline role for long text; ⌘/Ctrl+Enter sends.
+    if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey) && !ev.isComposing) {
       ev.preventDefault();
       send();
     }
@@ -2396,6 +2423,25 @@ body.drawer-open .drawer-backdrop { display: block; }
   });
   $("token").addEventListener("change", saveSettings);
   $("autoConnect").addEventListener("change", saveSettings);
+
+  // Keyboard: size the app to the visual viewport so the top bar stays put
+  // and only the transcript shrinks; undo iOS's page shift on focus.
+  function syncViewport() {
+    const vv = window.visualViewport;
+    const h = vv ? vv.height : window.innerHeight;
+    const root = document.documentElement;
+    if (!root || !h) return;
+    root.style.setProperty("--vvh", Math.round(h) + "px");
+    if (window.scrollY || root.scrollTop) window.scrollTo(0, 0);
+    if (follow) stickBottom(false);
+  }
+  if (window.visualViewport) {
+    visualViewport.addEventListener("resize", syncViewport);
+    visualViewport.addEventListener("scroll", syncViewport);
+  }
+  if (typeof window.addEventListener === "function") window.addEventListener("resize", syncViewport);
+  $("composer").addEventListener("focus", () => setTimeout(syncViewport, 50));
+  syncViewport();
 
   setConnected(false);
   syncDrawerChrome();
