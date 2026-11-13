@@ -251,7 +251,7 @@ export const bearerOf = header => String(header || '').replace(/^Bearer\s+/i, ''
 // Browser CORS for separately hosted web clients hitting /c/<token>/…
 // Tunneled desktop API responses do not carry Access-Control-* themselves.
 // ---------------------------------------------------------------------------
-export const CORS_ALLOW_HEADERS = 'content-type, authorization, accept, cache-control';
+export const CORS_ALLOW_HEADERS = 'content-type, authorization, accept, cache-control, x-firstrule-session';
 export const CORS_ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD';
 
 /** Headers every browser client response needs (including SSE EventSource). */

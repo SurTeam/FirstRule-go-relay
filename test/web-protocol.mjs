@@ -68,7 +68,7 @@ const server = createServer((req, res) => {
     res.writeHead(204, {
       'access-control-allow-origin': '*',
       'access-control-allow-methods': 'GET,POST,OPTIONS',
-      'access-control-allow-headers': 'content-type',
+      'access-control-allow-headers': 'content-type, authorization, accept, cache-control, x-firstrule-session',
     });
     return res.end();
   }
