@@ -1086,6 +1086,12 @@ body.drawer-open .drawer-backdrop { display: block; }
 
   function appendUser(text) { return appendCard("user", text, "You"); }
   function appendAgent(text) { return appendCard("agent", text, "FirstRule"); }
+  // Match store.OmitFromDisplayTranscript / TUI restore: model-only system
+  // records stay in Session.History for the worker, not the user transcript.
+  function omitSystemTranscript(text) {
+    const t = String(text || "");
+    return t.startsWith("[FirstRule workflow snapshot]") || t.startsWith("[shell side-effect review]");
+  }
   function appendSystem(text) { return appendCard("system", text, "FirstRule [System]"); }
   function appendError(text) { return appendCard("error", text, "Error"); }
   function appendThinking(text, collapsed) {
@@ -1394,12 +1400,18 @@ body.drawer-open .drawer-backdrop { display: block; }
     } else $("chipUsage").hidden = true;
     renderPhases();
   }
-  // Workflow track mirrors TUI footerPhase ("phase: X" / "complete").
+// Workflow track mirrors TUI footerPhaseTrack (✓abbr · current · abbr).
   function renderPhases() {
     const box = $("phaseTrack");
     box.innerHTML = "";
     const wf = state.session && state.session.workflow;
     if (!wf || !wf.phases || !wf.phases.length) return;
+    if (wf.principles > 1) {
+      const n = Math.max(1, Math.min(Number(wf.principle) || 1, wf.principles));
+      const mark = mk("span", "phase", n + "/" + wf.principles);
+      mark.title = "principle " + n + " of " + wf.principles;
+      box.appendChild(mark);
+    }
     wf.phases.forEach((p, i) => {
       const cls = wf.complete || i < wf.index ? "done" : i === wf.index ? (wf.blocked ? "blocked" : "cur") : "";
       // Compact: only the current phase is spelled out; the rest use 3 letters.
@@ -1408,7 +1420,7 @@ body.drawer-open .drawer-backdrop { display: block; }
       el.title = p;
       box.appendChild(el);
     });
-    if (wf.complete) box.appendChild(mk("span", "phase done", "✓ done"));
+    if (wf.complete) box.appendChild(mk("span", "phase done", "✓done"));
   }
 
   function hasBoundSession() {
@@ -1500,8 +1512,9 @@ body.drawer-open .drawer-backdrop { display: block; }
         appendCardText(state.stream.asst, data.text || "");
         break;
       }
-      case "system_notice": {
+case "system_notice": {
         finishAssistantStreams();
+        if (omitSystemTranscript(data.text || "")) break;
         const id = data.noticeId || "";
         const existing = id && Array.from(transcript().children).find((el) => el.dataset && el.dataset.noticeId === id);
         if (existing) setCardText(existing, data.text || "");
@@ -1611,7 +1624,8 @@ body.drawer-open .drawer-backdrop { display: block; }
         if (role === "user") appendUser(m.text || "");
         else if (role === "assistant") appendAgent(m.text || "");
         else if (role === "thinking") appendThinking(m.text || "", true);
-        else if (role === "system") {
+else if (role === "system") {
+          if (omitSystemTranscript(m.text || "")) continue;
           const card = appendSystem(m.text || "");
           if (m.noticeId) card.dataset.noticeId = m.noticeId;
         } else if (role === "tool_call") {

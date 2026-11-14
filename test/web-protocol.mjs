@@ -447,6 +447,8 @@ check('correct SSE event names', ['user_message', 'text_delta', 'system_notice',
 check('no legacy assistant_delta listener', !script.includes('assistant_delta'));
 check('permissions approve body', script.includes('JSON.stringify({ approve })'));
 check('history uses messages/tasks', script.includes('hist.messages') && script.includes('hist.tasks'));
+check('omits model-only system transcript', script.includes('omitSystemTranscript') && script.includes('[shell side-effect review]') && script.includes('[FirstRule workflow snapshot]'));
+check('phase track marks multi-principle runs', script.includes('wf.principles > 1') && script.includes('principle " + n + " of'));
 check('status line single row', /#statusLine \{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/.test(style) && /#phaseTrack \{[^}]*flex-wrap:\s*nowrap/.test(style));
 check('loading spinner markup', HTML.includes('id="loading"') && /@keyframes spin/.test(style));
 check('native-only assets', ![...HTML.matchAll(/<(?:link|script)[^>]*(?:href|src)=["']([^"']+)["']/g)].length);
