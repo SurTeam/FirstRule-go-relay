@@ -32,6 +32,17 @@ function historyFor(id) {
     return { id, messages, tasks: [] };
   }
   if (id === 'sess-old') return { id, messages: [{ role: 'user', text: 'old question' }, { role: 'assistant', text: 'old answer' }], tasks: [] };
+  if (id === 'sess-think') {
+    return {
+      id,
+      busy: true,
+      messages: [
+        { role: 'user', text: 'think now' },
+        { role: 'thinking', text: 'already shown prefix', streaming: true },
+      ],
+      tasks: [],
+    };
+  }
   return {
     id,
     messages: [
@@ -80,7 +91,7 @@ const server = createServer((req, res) => {
       : [{ id: 'sess-1', status: 'idle', model: 'demo', workspace: '/home/demo' }];
     if (!posted.creates.length) agents[0] = { id: 'sess-1', status: 'idle', model: 'demo', workspace: '/home/demo' };
     // Keep initial agent plus any created ones
-    const list = [{ id: 'sess-1', status: 'idle', model: 'demo', workspace: '/home/demo' }, ...[...resumed].map((id) => ({ id, status: 'idle', model: 'demo', workspace: '/home/demo' })), ...posted.creates.map((c) => ({ id: c.id, status: 'active', model: c.model || 'demo', workspace: c.workspace }))];
+    const list = [{ id: 'sess-1', status: 'idle', model: 'demo', workspace: '/home/demo' }, { id: 'sess-think', status: 'busy', model: 'demo', workspace: '/home/demo', busy: true }, ...[...resumed].map((id) => ({ id, status: 'idle', model: 'demo', workspace: '/home/demo' })), ...posted.creates.map((c) => ({ id: c.id, status: 'active', model: c.model || 'demo', workspace: c.workspace }))];
     // de-dupe by id
     const seen = new Set();
     const uniq = [];
@@ -661,6 +672,17 @@ await sleep(500);
   check('duplicate tool_done renders once', tools === 1, String(tools));
 }
 bigHistory.on = false;
+
+// Mid-connect thinking catch-up: history already has the streamed prefix;
+// overlapping reasoning_delta must append only the new suffix.
+await selectViaSessions('sess-think');
+await sleep(50);
+check('late attach restores thinking prefix', transcriptText().includes('already shown prefix'), transcriptText());
+broadcast('reasoning_delta', { type: 'reasoning_delta', text: 'already shown prefix' });
+broadcast('reasoning_delta', { type: 'reasoning_delta', text: ' and suffix' });
+await sleep(30);
+const thinkLines = transcriptText().split('\n').filter((l) => l.includes('think|') && l.includes('already shown prefix'));
+check('overlapping reasoning_delta does not duplicate prefix', thinkLines.length === 1 && thinkLines[0].includes('already shown prefix and suffix'), transcriptText());
 
 // Interrupt aborts the turn without unloading the primary.
 await selectViaSessions('sess-1');

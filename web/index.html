@@ -1062,9 +1062,25 @@ body.drawer-open .drawer-backdrop { display: block; }
     else scheduleRender(el);
     stickBottom(false);
   }
-  function appendCardText(el, text) {
+function appendCardText(el, text) {
     if (!el || !text) return;
     setCardText(el, (el.dataset.text || "") + text);
+  }
+// historyPayload is read after Subscribe, so live deltas already covered by a
+  // streaming history card can arrive again. Skip that overlapping prefix.
+  function consumeStreamSkip(key, delta) {
+    let skip = state.stream[key] || "";
+    if (!skip) return delta;
+    if (skip.startsWith(delta)) {
+      state.stream[key] = skip.slice(delta.length);
+      return "";
+    }
+    if (delta.startsWith(skip)) {
+      state.stream[key] = "";
+      return delta.slice(skip.length);
+    }
+    state.stream[key] = "";
+    return delta;
   }
 
   // System notices longer than 4 lines fold with "▸", like the TUI.
@@ -1319,16 +1335,18 @@ body.drawer-open .drawer-backdrop { display: block; }
     return el;
   }
 
-  function resetStreamCards() { state.stream = { asst: null, think: null, tools: {} }; }
+  function resetStreamCards() { state.stream = { asst: null, think: null, thinkSkip: "", asstSkip: "", tools: {} }; }
   function clearTranscript() {
     transcript().innerHTML = "";
     if (transcript().children && transcript().children.length) transcript().children.length = 0;
     resetStreamCards();
   }
-  function finishAssistantStreams() {
+function finishAssistantStreams() {
     // Reasoning collapses when the answer starts, like TUI ctrl+t default after stream.
     state.stream.asst = null;
     state.stream.think = null;
+    state.stream.thinkSkip = "";
+    state.stream.asstSkip = "";
   }
 
   /* —— Status line / chips around the composer —— */
@@ -1489,27 +1507,32 @@ body.drawer-open .drawer-backdrop { display: block; }
         appendUser(text);
         break;
       }
-      case "reasoning_delta": {
-        if (!(data.text || "")) break;
+case "reasoning_delta": {
+        const text = consumeStreamSkip("thinkSkip", data.text || "");
+        if (!text) break;
         beginTurn();
         setActivity("thinking");
         if (state.stream.asst) finishAssistantStreams();
         if (!state.stream.think) state.stream.think = appendThinking("", false);
-        appendCardText(state.stream.think, data.text);
+        appendCardText(state.stream.think, text);
         break;
       }
-      case "reasoning_end": {
+case "reasoning_end": {
         if (state.stream.think) { state.stream.think.dataset.open = ""; syncThinking(state.stream.think); }
         state.stream.think = null;
+        state.stream.thinkSkip = "";
         break;
       }
-      case "text_delta": {
+case "text_delta": {
+        const text = consumeStreamSkip("asstSkip", data.text || "");
+        if (!text && state.stream.asst) break;
         beginTurn();
         setActivity("streaming response");
         if (state.stream.think) { state.stream.think.dataset.open = ""; syncThinking(state.stream.think); state.stream.think = null; }
         if (!state.stream.asst) state.stream.asst = appendAgent("");
+        if (!text) break;
         state.turnHadText = true;
-        appendCardText(state.stream.asst, data.text || "");
+        appendCardText(state.stream.asst, text);
         break;
       }
 case "system_notice": {
@@ -1612,9 +1635,11 @@ case "system_notice": {
     clearTranscript();
     const msgs = (hist && hist.messages) || [];
     const tasks = (hist && hist.tasks) || [];
-    const byID = {};
+const byID = {};
     for (const t of tasks) if (t && t.id) byID[t.id] = t;
     let i = 0;
+    let liveThink = null;
+    let liveAsst = null;
     const step = () => {
       if (token !== state.historyToken) return;
       const end = Math.min(msgs.length, i + HISTORY_CHUNK);
@@ -1622,9 +1647,15 @@ case "system_notice": {
         const m = msgs[i];
         const role = (m && m.role) || "";
         if (role === "user") appendUser(m.text || "");
-        else if (role === "assistant") appendAgent(m.text || "");
-        else if (role === "thinking") appendThinking(m.text || "", true);
-else if (role === "system") {
+        else if (role === "assistant") {
+          const card = appendAgent(m.text || "");
+          if (m.streaming) liveAsst = card;
+        } else if (role === "thinking") {
+          // In-flight thinking from a late attach stays expanded and becomes
+          // the live stream card so later reasoning_delta appends the suffix.
+          const card = appendThinking(m.text || "", !m.streaming);
+          if (m.streaming) liveThink = card;
+        } else if (role === "system") {
           if (omitSystemTranscript(m.text || "")) continue;
           const card = appendSystem(m.text || "");
           if (m.noticeId) card.dataset.noticeId = m.noticeId;
@@ -1638,6 +1669,16 @@ else if (role === "system") {
       const tools = state.stream.tools;
       resetStreamCards();
       state.stream.tools = tools;
+state.stream.think = liveThink;
+      state.stream.asst = liveAsst;
+      // Overlapping live deltas that were already included in the history
+      // catch-up card must be skipped, not appended a second time.
+      state.stream.thinkSkip = liveThink ? (liveThink.dataset.text || "") : "";
+      state.stream.asstSkip = liveAsst ? (liveAsst.dataset.text || "") : "";
+      if (liveThink || liveAsst) {
+        beginTurn();
+        setActivity(liveThink ? "thinking" : "streaming response");
+      }
       stickBottom(true);
       if (done) done();
     };
