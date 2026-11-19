@@ -373,6 +373,12 @@ def run(page, base, label, mobile, shots):
     cb = page.locator("#btnCreateConfirm").bounding_box()
     check("create buttons reachable on screen", cb["y"] + cb["height"] <= vh + 1, cb)
     create_btn = page.evaluate("(() => { const c = getComputedStyle(document.getElementById('btnCreateCancel')); return [c.backgroundColor, c.borderRadius, c.minHeight, c.fontSize]; })()")
+    page.select_option("#createMode", "off")
+    page.click("#btnCreateCancel")
+    if mobile:
+        page.click("#btnSessions")
+    page.click("#btnNew")
+    check("create flow defaults to auto on reopen", page.input_value("#createMode") == "auto")
     page.click("#btnCreateCancel")
     page.click("#btnSettings")
     settings_btn = page.evaluate("(() => { const c = getComputedStyle(document.getElementById('btnSettingsClose')); return [c.backgroundColor, c.borderRadius, c.minHeight, c.fontSize]; })()")

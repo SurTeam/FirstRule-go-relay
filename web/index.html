@@ -2316,6 +2316,7 @@ setConnected(true);
     closeSessionsDrawer();
     document.body.classList.add("create-open");
     $("createDialog").hidden = false;
+    $("createMode").value = "auto";
     $("createHint").textContent = "Paths are sandboxed under the desktop home directory.";
     loadCreateModels().catch(() => {});
     listDirectories((($("createWorkspace").value || "~").trim()) || "~").then((data) => {
@@ -2335,7 +2336,7 @@ setConnected(true);
     const workspace = ($("createWorkspace").value || "").trim();
     if (!workspace) { $("createHint").textContent = "workspace is required"; return; }
     const model = ($("createModel").value || "").trim();
-    const mode = ($("createMode").value || "off").trim() || "off";
+    const mode = $("createMode").value || "auto";
     $("btnCreateConfirm").disabled = true;
     try {
       const body = { workspace, mode };
