@@ -1790,14 +1790,20 @@ state.stream.think = liveThink;
   function rememberOpened(id) {
     if (!id) return;
     if (!state.openedOrder.includes(id)) state.openedOrder.push(id);
+    saveOpened();
   }
   function forgetOpened(id) {
     state.openedOrder = state.openedOrder.filter((x) => x !== id);
+    saveOpened();
   }
   function visibleAgents(listed) {
     const byID = {};
     for (const a of listed || []) if (a && a.id) byID[a.id] = a;
-    state.openedOrder = state.openedOrder.filter((id) => byID[id]);
+    const kept = state.openedOrder.filter((id) => byID[id]);
+    if (kept.length !== state.openedOrder.length) {
+      state.openedOrder = kept;
+      saveOpened();
+    }
     return state.openedOrder.map((id) => byID[id]);
   }
 
@@ -1935,7 +1941,16 @@ async function ensurePrimarySelected() {
   }
 
   /* —— Connection & settings page (localStorage) —— */
-  const LS = { url: "firstrule.relayURL", token: "firstrule.relay.token", auto: "firstrule.relay.autoConnect" };
+  const LS = { url: "firstrule.relayURL", token: "firstrule.relay.token", auto: "firstrule.relay.autoConnect", opened: "firstrule.relay.opened" };
+  function loadOpened() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS.opened) || "[]");
+      if (Array.isArray(saved)) state.openedOrder = saved.filter((id) => typeof id === "string" && id);
+    } catch { /* keep the in-memory order */ }
+  }
+  function saveOpened() {
+    try { localStorage.setItem(LS.opened, JSON.stringify(state.openedOrder)); } catch { /* private mode */ }
+  }
   function normalizeRelayOrigin(raw) {
     const value = String(raw || "").trim();
     if (!value) return "";
@@ -2069,6 +2084,7 @@ function startAgentsPoll() {
 setConnected(true);
       closeSettings();
       clearTranscript();
+      loadOpened();
       // Only the initial connect may adopt a binding. Later polls/refreshes
       // never invent one after close or while another client creates.
       await refreshAgents({ adoptPrimary: false });
@@ -2109,7 +2125,8 @@ setConnected(true);
     state.base = "";
     state.session = null;
     state.agents = [];
-    state.openedOrder = [];
+    // Keep openedOrder across a daemon-restart disconnect. Reconnect intersects
+    // it with the sessions the new daemon resumed; sessions never opened stay out.
     state.primaryId = "";
     state.pendingUserText = "";
     state.historyLoadedFor = null;
