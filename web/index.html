@@ -169,6 +169,11 @@ aside h2, .settings h2 {
   flex-direction: column;
   gap: 6px;
   min-height: 0;
+  overscroll-behavior: contain;
+}
+#sessions {
+  flex: 0 1 auto;
+  max-height: min(42dvh, 360px);
 }
 .item {
   text-align: left;
@@ -557,7 +562,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   @media (prefers-reduced-motion: reduce) { aside#sidebar { transition: none; } }
   body.drawer-open aside#sidebar { transform: translateX(0); }
   #permissions { max-height: 30dvh; }
-  #sessions { flex: 1; }
+  #sessions { flex: 0 1 auto; max-height: min(38dvh, 280px); }
   .chip .v { max-width: 9em; }
 }
 @media (min-width: 900px) {
@@ -925,6 +930,9 @@ body.drawer-open .drawer-backdrop { display: block; }
     es: null,
     session: null,
     agents: [],
+    // Sessions this browser has opened, in open order. The sidebar shows only
+    // these, even when the daemon has other sessions loaded for the TUI.
+    openedOrder: [],
     models: [],
     primaryId: "",
     connected: false,
@@ -1660,7 +1668,16 @@ const byID = {};
           const card = appendSystem(m.text || "");
           if (m.noticeId) card.dataset.noticeId = m.noticeId;
         } else if (role === "tool_call") {
-          upsertTool(byID[m.taskId] || { id: m.taskId, name: "tool", status: "aborted" });
+          const task = Object.assign({}, byID[m.taskId] || { id: m.taskId, name: "tool", status: "aborted" });
+          const st = String(task.status || task.Status || "");
+          // Daemon/TUI is the source of truth. A stored running/preparing task
+          // only keeps spinning when the session is still busy; otherwise the
+          // turn already ended and the card must show a terminal state.
+          if ((st === "running" || st === "preparing" || st === "queued") && !(hist && hist.busy)) {
+            task.status = "aborted";
+            if (task.Status) task.Status = "aborted";
+          }
+          upsertTool(task);
         }
       }
       if (i < msgs.length) { raf(step); return; }
@@ -1703,6 +1720,7 @@ state.stream.think = liveThink;
       const n = ((hist && hist.messages) || []).length;
       if (n) setHint("Restored " + n + " history message(s).");
       if (hist && hist.busy && !state.turnActive) { beginTurn(); setActivity("running"); }
+      else if (hist && !hist.busy) endTurn();
       flushLiveQueue();
     });
   }
@@ -1766,6 +1784,23 @@ state.stream.think = liveThink;
     });
   }
 
+  // Sidebar order is the order the user opened sessions in this tab. Daemon
+  // map iteration must not reshuffle it, and sessions opened only in the TUI
+  // stay out of the list.
+  function rememberOpened(id) {
+    if (!id) return;
+    if (!state.openedOrder.includes(id)) state.openedOrder.push(id);
+  }
+  function forgetOpened(id) {
+    state.openedOrder = state.openedOrder.filter((x) => x !== id);
+  }
+  function visibleAgents(listed) {
+    const byID = {};
+    for (const a of listed || []) if (a && a.id) byID[a.id] = a;
+    state.openedOrder = state.openedOrder.filter((id) => byID[id]);
+    return state.openedOrder.map((id) => byID[id]);
+  }
+
   function renderSessions() {
     const box = $("sessions");
     box.innerHTML = "";
@@ -1813,16 +1848,18 @@ async function refreshAgents(opts) {
     // after the user closed the web binding and a TUI session became primary).
     if (state.primaryId) {
       if (!listed.some((a) => a.id === state.primaryId)) {
-        state.agents = listed;
+        state.agents = visibleAgents(listed);
         renderSessions();
         return data;
       }
-      state.agents = normalizeAgents(listed, state.primaryId);
+      rememberOpened(state.primaryId);
+      state.agents = normalizeAgents(visibleAgents(listed), state.primaryId);
     } else if (adoptPrimary && serverPrimary) {
       state.primaryId = serverPrimary;
-      state.agents = normalizeAgents(listed, state.primaryId);
+      rememberOpened(state.primaryId);
+      state.agents = normalizeAgents(visibleAgents(listed), state.primaryId);
     } else {
-      state.agents = normalizeAgents(listed, "");
+      state.agents = normalizeAgents(visibleAgents(listed), "");
     }
     renderSessions();
     return data;
@@ -2034,10 +2071,9 @@ setConnected(true);
       clearTranscript();
       // Only the initial connect may adopt a binding. Later polls/refreshes
       // never invent one after close or while another client creates.
-      await refreshAgents({ adoptPrimary: true });
-      if (!state.primaryId && state.agents.length && state.agents[0].id) {
-        state.primaryId = state.agents[0].id;
-      }
+      await refreshAgents({ adoptPrimary: false });
+      // Do not bind every daemon session. Only a session this page already
+      // opened (or the one the user selects next) appears in the sidebar.
       const bound = await ensurePrimarySelected();
       if (!bound) {
         clearBoundSessionView("No running sessions on the desktop. Create one with ＋ New, or start one in the daemon and refresh.");
@@ -2073,6 +2109,7 @@ setConnected(true);
     state.base = "";
     state.session = null;
     state.agents = [];
+    state.openedOrder = [];
     state.primaryId = "";
     state.pendingUserText = "";
     state.historyLoadedFor = null;
@@ -2099,6 +2136,7 @@ setConnected(true);
       const data = await api("/v1/agents/" + encodeURIComponent(id) + "/select", { method: "POST", body: "{}" });
       if (seq !== state.switchSeq) return;
       state.primaryId = (data && data.primaryId) || id;
+      rememberOpened(state.primaryId);
       state.agents = normalizeAgents(state.agents, state.primaryId);
       renderSessions();
       // Reopen SSE on the newly bound primary Hub (subscribers do not migrate
@@ -2223,6 +2261,7 @@ setConnected(true);
         setLoading(true);
         await api("/v1/agents", { method: "POST", body: JSON.stringify({ workspace: it.workspace || workspace, sessionId: it.id, resume: true }) });
       }
+      rememberOpened(it.id);
       await selectAgent(it.id);
     } catch (err) {
       setLoading(false);
@@ -2348,7 +2387,7 @@ setConnected(true);
       clearTranscript();
       endTurn();
       const newId = created && created.id;
-      if (newId) state.primaryId = newId;
+      if (newId) { rememberOpened(newId); state.primaryId = newId; }
       await refreshAgents();
       if (newId) {
         await api("/v1/agents/" + encodeURIComponent(newId) + "/select", { method: "POST", body: "{}" });
@@ -2383,6 +2422,7 @@ setConnected(true);
         syncComposerEnabled();
       }
       await api("/v1/agents/" + encodeURIComponent(target), { method: "DELETE", body: "{}" });
+      forgetOpened(target);
       await refreshAgents();
       if (closingCurrent) {
         // Never auto-bind another running session after close: the main pane
