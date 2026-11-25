@@ -88,6 +88,7 @@ input, textarea, select { min-height: var(--touch); }
 
 #app {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   height: var(--vvh, 100dvh);
@@ -138,7 +139,7 @@ header h1 { margin: 0; font-size: 15px; white-space: nowrap; }
 
 #main {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-height: 0;
   height: 100%;
@@ -164,13 +165,17 @@ aside h2, .settings h2 {
   color: var(--muted);
 }
 #sessions, #permissions {
-  overflow: auto;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-height: 0;
   overscroll-behavior: contain;
 }
+#sessions > *, #permissions > * { flex: none; }
+#permissions .item { grid-template-columns: minmax(0, 1fr); }
+#permissions .item .sub { overflow-wrap: anywhere; }
+#permissions .item .row { flex-wrap: wrap; }
 #sessions {
   flex: 0 1 auto;
   max-height: min(42dvh, 360px);
@@ -188,10 +193,18 @@ aside h2, .settings h2 {
 .item.active { background: #1e2a3d; border-color: #2f5a8f; }
 .item:focus { outline: none; }
 .item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.item .main { min-width: 0; display: grid; gap: 2px; }
+.item .main {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  text-align: left;
+}
 .item .ws { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.item .id { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
+.item .id { font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .item .sub { color: var(--muted); font-size: 12px; margin-top: 2px; display: flex; gap: 6px; align-items: center; }
+.item .sub .dot { flex: none; }
+.item .sub .model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .close {
   flex: none;
   width: 32px;
@@ -208,6 +221,7 @@ aside h2, .settings h2 {
 
 #chat {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
 }
@@ -356,6 +370,7 @@ aside h2, .settings h2 {
   padding: 6px 8px;
   padding-bottom: max(6px, var(--safe-b));
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   background: var(--panel);
 }
@@ -410,10 +425,10 @@ aside h2, .settings h2 {
 #composer:disabled, #btnSend:disabled { opacity: .55; cursor: not-allowed; }
 #composer {
   flex: 1;
+  min-width: 0;
   min-height: 44px;
   max-height: min(30dvh, 200px);
   resize: none;
-  width: 100%;
   line-height: 1.4;
 }
 #btnSend, #btnStopTurn { min-height: 44px; }
@@ -459,6 +474,7 @@ aside h2, .settings h2 {
   border-radius: 8px; padding: 8px 10px; gap: 8px; justify-content: space-between; font-size: 14px;
 }
 #picker button:hover, #picker button[aria-selected="true"] { background: var(--panel-2); }
+#picker button span, .slash-item .desc { min-width: 0; overflow-wrap: anywhere; }
 #picker button .sub { color: var(--muted); font-size: 12px; }
 #picker button.cur::after { content: "✓"; color: var(--ok); }
 /* Slash command menu (listbox; focus stays in composer) */
@@ -568,7 +584,7 @@ body.drawer-open .drawer-backdrop { display: block; }
 @media (min-width: 900px) {
   #btnSessions, #btnCloseSessions { display: none; }
   .drawer-backdrop { display: none !important; }
-  #main { grid-template-columns: 280px 1fr; }
+  #main { grid-template-columns: 280px minmax(0, 1fr); }
   aside#sidebar { position: static; transform: none !important; width: auto; margin-bottom: 8px; }
   #slashMenu { right: auto; width: min(360px, calc(100% - 16px)); }
 }
@@ -1740,7 +1756,7 @@ state.stream.think = liveThink;
     // until it has rendered, so the view also resyncs after relay drops.
     state.liveQueue = [];
     setLoading(true);
-    const es = new EventSource(state.base + "/v1/events");
+    const es = new EventSource(state.base + "/v1/events?sessionId=" + encodeURIComponent(state.primaryId));
     state.es = es;
     const dispatch = (type, data) => {
       if (state.es !== es) return;
@@ -1820,11 +1836,20 @@ state.stream.think = liveThink;
       main.type = "button";
       const ws = String(a.workspace || "").replace(/\/+$/, "");
       main.appendChild(mk("div", "ws", ws.split("/").pop() || ws || "(workspace)"));
-      main.appendChild(mk("div", "id", a.id));
+      const id = mk("div", "id", a.id);
+      id.title = a.id;
+      main.appendChild(id);
       const sub = mk("div", "sub");
       const dot = mk("span", "dot " + (a.busy ? "busy" : a.state === "stopped" ? "bad" : "ok"));
       sub.appendChild(dot);
-      sub.appendChild(mk("span", "", [a.busy ? "running" : a.state, a.model, a.mode && a.mode !== "off" ? "flow " + a.mode : "", selected ? "selected" : ""].filter(Boolean).join(" · ")));
+      const status = [a.busy ? "busy" : a.state, a.attached === false ? "detached" : ""].filter(Boolean).join(" · ");
+      sub.appendChild(mk("span", "", status));
+      const details = [a.model, a.mode && a.mode !== "off" ? "flow " + a.mode : ""].filter(Boolean).join(" · ");
+      if (details) {
+        const model = mk("span", "model", details);
+        model.title = details;
+        sub.appendChild(model);
+      }
       main.appendChild(sub);
       main.title = a.workspace || "";
       main.onclick = () => selectAgent(a.id);
@@ -1845,7 +1870,10 @@ state.stream.think = liveThink;
 
 async function refreshAgents(opts) {
     const adoptPrimary = Boolean(opts && opts.adoptPrimary);
-    const data = await api("/v1/agents");
+    const base = state.base;
+    const boundBefore = state.primaryId;
+    const data = await api("/v1/agents", { cache: "no-store" });
+    if (base !== state.base) return data;
     const listed = visibleAgents(normalizeAgents(data && data.agents, ""));
     if (adoptPrimary && !listed.some((agent) => agent.id === state.primaryId)) {
       const primary = listed.find((agent) => agent.id === data.primaryId) || listed[0];
@@ -1853,6 +1881,11 @@ async function refreshAgents(opts) {
     }
     state.agents = normalizeAgents(listed, state.primaryId);
     renderSessions();
+    if (!adoptPrimary && boundBefore && state.primaryId === boundBefore && !listed.some((agent) => agent.id === boundBefore)) {
+      clearBoundSessionView("Selected session was closed. Open or create a session before sending.");
+      setHint("No active session — use ＋ New or /resume.", true);
+      setStatus(false, "waiting for session");
+    }
     return data;
   }
 
@@ -2015,19 +2048,8 @@ function startAgentsPoll() {
       if (!state.connected) return;
       // Pause while the tab is hidden to avoid burning battery on idle polls.
       if (typeof document !== "undefined" && document.hidden) return;
-      const boundBefore = state.primaryId;
       refreshAgents()
-        .then(() => {
-          if (boundBefore && !state.agents.some((a) => a.id === boundBefore)) {
-            clearBoundSessionView("Selected session was closed. Open or create a session before sending.");
-            setHint("No active session — use ＋ New or /resume.", true);
-            setStatus(false, "waiting for session");
-            return;
-          }
-          // A session opened elsewhere should appear in the sidebar without
-          // hijacking the composer binding.
-          syncComposerEnabled();
-        })
+        .then(syncComposerEnabled)
         .catch(() => {});
     };
     state.agentsPoll = setInterval(tick, 2500);
@@ -2422,7 +2444,7 @@ function startAgentsPoll() {
       await api("/v1/agents/" + encodeURIComponent(target), { method: "DELETE", body: "{}" });
       forgetOpened(target);
       await refreshAgents();
-      if (closingCurrent) {
+      if (closingCurrent && state.primaryId === target) {
         // Never auto-bind another running session after close: the main pane
         // must stay empty until the user explicitly opens one.
         clearBoundSessionView("Session closed. Open or create a session before sending.");

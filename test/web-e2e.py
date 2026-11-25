@@ -138,10 +138,12 @@ class H(BaseHTTPRequestHandler):
         if p == "/healthz":
             return self.send_json(200, {"ok": True})
         if p == "/v1/agents":
-            return self.send_json(200, {"primaryId": state["primary"], "agents": [
-                {"id": "sess-1", "workspace": "/home/demo/proj", "model": state["model"], "mode": state["mode"], "status": "idle"},
+            agents = [
+                {"id": "sess-1", "workspace": "/home/demo/proj", "model": state["model"], "mode": state["mode"], "status": "idle", "attached": state["attached"]},
                 {"id": "sess-2", "workspace": "/home/demo/other", "model": "demo-mini", "mode": "off", "status": "idle"},
-            ]})
+                *state["extra_agents"],
+            ]
+            return self.send_json(200, {"primaryId": state["primary"], "agents": [a for a in agents if a["id"] != state["closed"]]})
         if p == "/v1/session":
             if not state["primary"]:
                 return self.send_json(503, {"error": "no primary agent"})
@@ -229,7 +231,7 @@ def check(name, ok, detail=""):
 
 
 def run(page, base, label, mobile, shots):
-    state.update(primary="", model="demo-pro", thinking="", mode="lite")
+    state.update(primary="", model="demo-pro", thinking="", mode="lite", attached=True, extra_agents=[], closed="")
     print(f"[{label}]")
     page.goto(base + "/web/")
     # First visit: settings page opens instead of a top-bar token row.
@@ -443,6 +445,39 @@ def run(page, base, label, mobile, shots):
     hb = page.evaluate("getComputedStyle(document.querySelector('header')).backgroundColor")
     tw = page.evaluate("getComputedStyle(document.getElementById('transcript')).willChange")
     check("header opaque, no layer promotion on scroller", hb not in ("rgba(0, 0, 0, 0)", "transparent") and tw == "auto", (hb, tw))
+
+    state.update(model="demo/" + "long-model-" * 20, attached=False, extra_agents=[
+        {"id": f"2026-01-01T00-00-00-000Z_session-{index}", "workspace": "/home/demo/" + "workspace-" * 20,
+         "model": "demo/" + "long-model-" * 20, "status": "idle", "attached": False}
+        for index in range(10)
+    ])
+    if mobile:
+        page.set_viewport_size({"width": 320, "height": 640})
+        page.click("#btnSessions")
+    page.locator("#sessions .item.active .sub", has_text="detached").wait_for(timeout=5000)
+    check("long session list scrolls without overlapping rows", page.evaluate("""() => {
+        const list = document.querySelector('#sessions');
+        const rows = [...list.querySelectorAll('.item')].map(row => row.getBoundingClientRect());
+        return rows.length === 12 && list.scrollHeight > list.clientHeight && list.scrollWidth <= list.clientWidth + 1
+            && rows.every((row, i) => !i || row.top >= rows[i - 1].bottom);
+    }"""))
+    if mobile:
+        page.click("#btnCloseSessions")
+    state["closed"] = "sess-1"
+    page.wait_for_function("document.querySelector('#composer').disabled && !document.querySelector('#sessions .item.active')", timeout=5000)
+    check("terminal-side close removes the row and keeps the composer unbound",
+          page.locator("#sessions .id", has_text="sess-1").count() == 0)
+    page.evaluate("""() => {
+        document.querySelector('#chipModelV').textContent = 'demo/' + 'long-model-'.repeat(40);
+        document.querySelector('#chipUsage').hidden = false;
+        document.querySelector('#chipUsageV').textContent = '◇ $123456.0123 · 1000000 tok · ↺ 100%';
+        document.querySelector('#btnStopTurn').hidden = false;
+    }""")
+    check("model chips and send controls stay within the chat width", page.evaluate("""() => {
+        const chat = document.querySelector('#chat').getBoundingClientRect();
+        return [...document.querySelectorAll('.chip:not([hidden]), #composer, #btnSend, #btnStopTurn')]
+            .every(el => { const rect = el.getBoundingClientRect(); return rect.left >= chat.left && rect.right <= chat.right; });
+    }"""))
 
 
 def main():
