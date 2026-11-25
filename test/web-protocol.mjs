@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Protocol e2e for relay/web/index.html against a mock desktop remote API.
-// Verifies connect, history restore, SSE receive, send→user_message, permissions
+// Verifies connect, history restore, SSE receive, send→user_message
 // approve body, slash commands, and shell invariant markers.
 
 import { createServer } from 'node:http';
@@ -19,7 +19,7 @@ const check = (name, ok, detail = '') => {
   if (!ok) failures++;
 };
 
-const posted = { history: 0, resumes: [], requests: [], messages: [], permissions: [], selects: [], creates: [], sessions: [], fs: [], delegates: [] };
+const posted = { history: 0, resumes: [], requests: [], messages: [], selects: [], creates: [], sessions: [], fs: [] };
 const sseClients = new Set();
 let primaryId = ''; // unbound until web POSTs /select (mirrors desktop Bridge)
 
@@ -177,15 +177,6 @@ const server = createServer((req, res) => {
   if (pathname === '/v1/delegates' && req.method === 'GET') {
     return sendJSON(200, { tasks: [{ id: 'child', status: 'waiting_permission' }] });
   }
-  if (pathname === '/v1/delegates' && req.method === 'POST') {
-    const chunks = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => {
-      posted.delegates.push(JSON.parse(Buffer.concat(chunks).toString() || '{}'));
-      sendJSON(200, { ok: true });
-    });
-    return;
-  }
   if (pathname === '/v1/fs' && req.method === 'GET') {
     posted.fs.push(url.pathname + url.search);
     const pathArg = url.searchParams.get('path') || '/home/demo';
@@ -209,19 +200,6 @@ if (pathname === '/v1/history' && req.method === 'GET') {
         { id: 'sess-old', summary: 'older work', running: false, workspace: '/home/demo', lastUserAt: Date.now() - 7200000 },
       ],
     });
-  }
-  if (pathname === '/v1/permissions' && req.method === 'GET') {
-    return sendJSON(200, [{ id: 7, capability: 'shell', reason: 'run ls', taskId: 'child' }]);
-  }
-  if (pathname.startsWith('/v1/permissions/') && req.method === 'POST') {
-    const chunks = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => {
-      const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
-      posted.permissions.push({ id: pathname.split('/').pop(), body });
-      sendJSON(200, { ok: true, approve: body.approve });
-    });
-    return;
   }
   if (pathname === '/v1/queue' && req.method === 'GET') {
     if (!primaryId) return sendJSON(503, { error: 'no primary agent' });
@@ -403,7 +381,7 @@ function buildDOM() {
     'statusDot', 'statusText', 'token', 'relayURL', 'btnConnect', 'btnDisconnect',
     'btnSessions', 'btnCloseSessions', 'drawerBackdrop', 'sidebar', 'chat',
     'sessionLabel', 'btnNew', 'btnRefresh', 'transcript', 'composer',
-    'hint', 'btnSend', 'sessions', 'permissions', 'btnRefreshAgents', 'btnRefreshPerms',
+    'hint', 'btnSend', 'sessions', 'btnRefreshAgents',
     'slashMenu', 'createDialog', 'createTitle', 'createWorkspace', 'pathMenu',
     'createModel', 'createMode', 'createHint', 'btnCreateCancel', 'btnCreateConfirm',
     'btnSettings', 'btnSettingsClose', 'settingsDialog', 'settingsHint', 'autoConnect',
@@ -460,7 +438,7 @@ check('slash menu marker', HTML.includes('id="slashMenu"'));
 check('relayURL field', HTML.includes('id="relayURL"') && HTML.includes('firstrule.relayURL'));
 check('correct SSE event names', ['user_message', 'text_delta', 'system_notice', 'tool_done', 'turn_done', 'agent_error'].every((t) => script.includes(`"${t}"`)));
 check('no legacy assistant_delta listener', !script.includes('assistant_delta'));
-check('permissions approve body', script.includes('JSON.stringify({ approve })'));
+check('session sidebar has no permission controls', !HTML.includes('id="permissions"') && !HTML.includes('btnRefreshPerms'));
 check('history uses messages/tasks', script.includes('hist.messages') && script.includes('hist.tasks'));
 check('omits model-only system transcript', script.includes('omitSystemTranscript') && script.includes('[shell side-effect review]') && script.includes('[FirstRule workflow snapshot]'));
 check('phase track marks multi-principle runs', script.includes('wf.principles > 1') && script.includes('principle " + n + " of'));
@@ -546,20 +524,8 @@ await $('btnSend').onclick();
 await sleep(30);
 check('slash /help works', transcriptText().includes('Commands:'));
 
-// Trigger permission button path via rendered list
-await $('btnRefreshPerms').onclick();
-await sleep(40);
-const permItem = $('permissions').children.find((c) => c.className === 'item');
-check('permissions rendered', Boolean(permItem));
-if (permItem) {
-  const approveBtn = permItem.children.find((c) => c.className === 'row')?.children?.[0];
-  if (approveBtn && approveBtn.onclick) await approveBtn.onclick();
-  await sleep(40);
-}
-check('permission posts approve:true', posted.permissions.some((p) => p.body && p.body.approve === true));
-
-
-check('slash catalog includes remote commands', ['continue','model','principle','tasks','agents','permissions','approve','deny','revoke','settings','compact','pwd'].every((n) => script.includes('name: "' + n + '"')));
+check('slash catalog includes remote commands', ['continue','model','principle','tasks','agents','settings','compact','pwd'].every((n) => script.includes('name: "' + n + '"')));
+check('slash catalog omits operator permission commands', !/name:\s*"(permissions|approve|deny|revoke)"/.test(script));
 check('create dialog markers', HTML.includes('id="createDialog"') && script.includes('/v1/fs') && script.includes('confirmCreateSession'));
 
 $('composer').value = '/pwd';
@@ -598,16 +564,6 @@ await sleep(40);
 check('slash /agents works', transcriptText().includes('waiting_permission') || transcriptText().includes('child'));
 check('slash /agents renders table not JSON', /\| `child` \| waiting_permission/.test(transcriptText()) && !transcriptText().includes('"status"'), transcriptText());
 
-
-$('composer').value = '/approve 7';
-await $('btnSend').onclick();
-await sleep(40);
-check('slash /approve works', posted.permissions.some((p) => String(p.id) === '7' && p.body && p.body.approve === true));
-
-$('composer').value = '/revoke child shell';
-await $('btnSend').onclick();
-await sleep(40);
-check('slash /revoke works', posted.delegates.some((d) => d.action === 'revoke' && d.taskId === 'child' && d.capability === 'shell'));
 
 check('slash omits daemon/exit', !/name:\s*"daemon"/.test(script) && !/name:\s*"exit"/.test(script));
 check('slash close replaces stop', /name:\s*"close"/.test(script) && !HTML.includes('Stop session'));
@@ -738,6 +694,9 @@ async function selectViaSessions(id) {
   await row.children[0].onclick();
 }
 
+check('web sends no permission or delegate mutation requests', !posted.requests.some((request) =>
+  request.includes('/v1/permissions') || request === 'POST /v1/delegates'
+));
 server.close();
 console.log(`\nweb-protocol: ${failures ? failures + ' failed' : 'all passed'}`);
 process.exit(failures);

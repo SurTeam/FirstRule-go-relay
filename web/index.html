@@ -164,22 +164,17 @@ aside h2, .settings h2 {
   letter-spacing: .04em;
   color: var(--muted);
 }
-#sessions, #permissions {
+#sessions {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-height: 0;
   overscroll-behavior: contain;
-}
-#sessions > *, #permissions > * { flex: none; }
-#permissions .item { grid-template-columns: minmax(0, 1fr); }
-#permissions .item .sub { overflow-wrap: anywhere; }
-#permissions .item .row { flex-wrap: wrap; }
-#sessions {
   flex: 0 1 auto;
   max-height: min(42dvh, 360px);
 }
+#sessions > * { flex: none; }
 .item {
   text-align: left;
   padding: 8px 10px;
@@ -577,7 +572,6 @@ body.drawer-open .drawer-backdrop { display: block; }
   }
   @media (prefers-reduced-motion: reduce) { aside#sidebar { transition: none; } }
   body.drawer-open aside#sidebar { transform: translateX(0); }
-  #permissions { max-height: 30dvh; }
   #sessions { flex: 0 1 auto; max-height: min(38dvh, 280px); }
   .chip .v { max-width: 9em; }
 }
@@ -615,11 +609,6 @@ body.drawer-open .drawer-backdrop { display: block; }
         <button type="button" id="btnNew">＋ New</button>
       </div>
       <div id="sessions"><div class="dim">connect to load</div></div>
-      <div class="row">
-        <h2 class="grow">Permissions</h2>
-        <button type="button" id="btnRefreshPerms" class="ghost" aria-label="Refresh permissions">↻</button>
-      </div>
-      <div id="permissions"><div class="dim">none pending</div></div>
       <button type="button" id="btnRefresh" class="ghost">Refresh all</button>
     </aside>
 
@@ -981,10 +970,6 @@ body.drawer-open .drawer-backdrop { display: block; }
     { name: "principle", description: "off | auto | lite | full" },
     { name: "tasks", description: "recorded tool tasks" },
     { name: "agents", description: "delegated task states" },
-    { name: "permissions", description: "pending permission requests" },
-    { name: "approve", description: "approve a permission request ID" },
-    { name: "deny", description: "deny a permission request ID" },
-    { name: "revoke", description: "revoke TASK CAPABILITY" },
     { name: "settings", description: "show or set session settings" },
     { name: "compact", description: "summarize older context now" },
     { name: "status", description: "session and connection status" },
@@ -1570,11 +1555,6 @@ case "system_notice": {
         }
         break;
       }
-      case "permission_request": {
-        appendSystem("Permission requested" + (data.text ? ": " + data.text : "") + " — review it in the sidebar.");
-        refreshPermissions().catch(() => {});
-        break;
-      }
       case "tool_preparing":
       case "tool_start":
       case "tool_done": {
@@ -1774,7 +1754,7 @@ state.stream.think = liveThink;
     });
     [
       "user_message", "text_delta", "reasoning_delta", "reasoning_end", "system_notice",
-      "tool_preparing", "tool_start", "tool_done", "stream_done", "turn_done", "agent_error", "permission_request",
+      "tool_preparing", "tool_start", "tool_done", "stream_done", "turn_done", "agent_error",
     ].forEach((t) => es.addEventListener(t, on(t)));
     es.onmessage = (ev) => {
       let data = {};
@@ -1923,41 +1903,6 @@ async function ensurePrimarySelected() {
     updateSessionLabel();
   }
 
-  async function refreshPermissions() {
-    const list = await api("/v1/permissions");
-    const box = $("permissions");
-    box.innerHTML = "";
-    const items = Array.isArray(list) ? list : (list && list.permissions) || [];
-    if (!items.length) { box.innerHTML = "<div class=\"dim\">none pending</div>"; return; }
-    for (const p of items) {
-      const wrap = mk("div", "item");
-      wrap.appendChild(mk("div", "ws", "#" + (p.id != null ? p.id : "?") + " " + (p.capability || p.tool || p.name || "permission")));
-      wrap.appendChild(mk("div", "sub", [p.reason || p.detail || p.summary || "", p.task_id || p.taskId ? "task " + (p.task_id || p.taskId) : ""].filter(Boolean).join(" · ")));
-      const row = mk("div", "row");
-      row.style.marginTop = "6px";
-      const allow = mk("button", "primary", "Approve");
-      allow.type = "button";
-      allow.onclick = () => decidePermission(p.id, true);
-      const deny = mk("button", "danger", "Deny");
-      deny.type = "button";
-      deny.onclick = () => decidePermission(p.id, false);
-      row.appendChild(allow);
-      row.appendChild(deny);
-      wrap.appendChild(row);
-      box.appendChild(wrap);
-    }
-  }
-
-  async function decidePermission(id, approve) {
-    try {
-      await api("/v1/permissions/" + id, { method: "POST", body: JSON.stringify({ approve }) });
-      appendSystem((approve ? "Approved" : "Denied") + " permission #" + id);
-      await refreshPermissions();
-    } catch (err) {
-      appendError(String(err.message || err));
-    }
-  }
-
   /* —— Connection & settings page (localStorage) —— */
   const LS = { url: "firstrule.relayURL", token: "firstrule.relay.token", auto: "firstrule.relay.autoConnect", opened: "firstrule.relay.opened" };
   function loadOpened() {
@@ -2103,7 +2048,7 @@ function startAgentsPoll() {
       } else {
         // Subscribe only after BindPrimary: /v1/events snapshots the hub at open time.
         openEvents();
-        await Promise.all([refreshModels(), refreshSession(), refreshPermissions(), refreshQueue()]);
+        await Promise.all([refreshModels(), refreshSession(), refreshQueue()]);
         if (!isNarrow()) $("composer").focus();
         setHint("Connected. Type / for commands.");
       }
@@ -2136,7 +2081,6 @@ function startAgentsPoll() {
     setPendingQueue([]);
     updateSessionLabel();
     $("sessions").innerHTML = "<div class=\"dim\">connect to load</div>";
-    $("permissions").innerHTML = "<div class=\"dim\">none pending</div>";
     setHint("Disconnected");
     $("settingsHint").textContent = "Disconnected";
   }
@@ -2162,7 +2106,7 @@ function startAgentsPoll() {
       // Reopen SSE on the newly bound primary Hub (subscribers do not migrate
       // on Bind). Its first frame is the history; the rest load in parallel.
       openEvents();
-      await Promise.all([refreshAgents(), refreshSession(), refreshPermissions(), refreshQueue()]);
+      await Promise.all([refreshAgents(), refreshSession(), refreshQueue()]);
       if (seq === state.switchSeq) syncComposerEnabled();
     } catch (err) {
       if (seq === state.switchSeq) {
@@ -2417,7 +2361,7 @@ function startAgentsPoll() {
       }
       const bound = newId ? true : await ensurePrimarySelected();
       if (bound) openEvents();
-      await Promise.all([refreshSession(), refreshPermissions(), refreshQueue()]);
+      await Promise.all([refreshSession(), refreshQueue()]);
       appendSystem("Created session `" + (newId || "") + "` in `" + workspace + "`");
       syncComposerEnabled();
       setHint("Session created.");
@@ -2734,30 +2678,6 @@ function startAgentsPoll() {
         } catch (err) { fail(err); }
         return true;
       }
-      case "permissions":
-        await refreshPermissions().catch(fail);
-        if (isNarrow()) openSessionsDrawer();
-        setHint("Permissions refreshed.");
-        return true;
-      case "approve":
-      case "deny": {
-        if (!arg) { appendSystem("usage: `/" + cmd + " REQUEST_ID`"); return true; }
-        try {
-          await api("/v1/permissions/" + encodeURIComponent(arg), { method: "POST", body: JSON.stringify({ approve: cmd === "approve" }) });
-          await refreshPermissions();
-          appendSystem((cmd === "approve" ? "Approved" : "Denied") + " permission #" + arg);
-        } catch (err) { fail(err); }
-        return true;
-      }
-      case "revoke": {
-        const parts = arg.split(/\s+/).filter(Boolean);
-        if (parts.length !== 2) { appendSystem("usage: `/revoke TASK CAPABILITY`"); return true; }
-        try {
-          await api("/v1/delegates", { method: "POST", body: JSON.stringify({ action: "revoke", taskId: parts[0], capability: parts[1] }) });
-          appendSystem("Revoked `" + parts[1] + "` from `" + parts[0] + "`");
-        } catch (err) { fail(err); }
-        return true;
-      }
       case "settings": {
         try {
           if (!arg) {
@@ -2841,7 +2761,7 @@ function startAgentsPoll() {
       .then(() => ensurePrimarySelected())
       .then((bound) => {
         if (bound) openEvents();
-        return Promise.all([refreshModels(), refreshSession(), refreshPermissions()]);
+        return Promise.all([refreshModels(), refreshSession()]);
       })
       .catch(appendErrorFromPromise);
   };
@@ -2855,7 +2775,6 @@ function startAgentsPoll() {
       })
       .catch(appendErrorFromPromise);
   };
-  $("btnRefreshPerms").onclick = () => refreshPermissions().catch(appendErrorFromPromise);
   $("btnSessions").onclick = toggleSessionsDrawer;
   $("btnCloseSessions").onclick = closeSessionsDrawer;
   $("drawerBackdrop").onclick = closeSessionsDrawer;

@@ -156,8 +156,6 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(200, {"models": MODELS})
         if p == "/v1/history":
             return self.send_json(200, history_payload())
-        if p == "/v1/permissions":
-            return self.send_json(200, [])
         if p == "/v1/fs":
             dirs = [{"name": f"very-long-directory-name-number-{i:02d}-for-overflow", "path": f"/home/demo/very-long-directory-name-number-{i:02d}-for-overflow"} for i in range(60)]
             return self.send_json(200, {"path": "/home/demo", "home": "/home/demo", "directories": dirs})

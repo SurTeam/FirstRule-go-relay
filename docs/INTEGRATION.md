@@ -57,7 +57,7 @@ A minimal useful surface:
 | `GET` | `/v1/session` | Current session summary |
 | `POST` | `/v1/messages` | Enqueue a user message |
 | `GET` | `/v1/events` | SSE stream of agent/tool events |
-| `POST` | `/v1/permissions/{id}` | Approve/deny a pending permission |
+| `GET` | `/v1/delegates` | Read delegated task states |
 
 Exact routes are owned by the FirstRule main repository; the relay does not
 interpret them.
