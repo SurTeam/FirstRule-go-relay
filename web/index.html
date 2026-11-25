@@ -930,8 +930,7 @@ body.drawer-open .drawer-backdrop { display: block; }
     es: null,
     session: null,
     agents: [],
-    // Sessions this browser has opened, in open order. The sidebar shows only
-    // these, even when the daemon has other sessions loaded for the TUI.
+    // Keep the sidebar order stable as running sessions are discovered.
     openedOrder: [],
     models: [],
     primaryId: "",
@@ -1784,12 +1783,9 @@ state.stream.think = liveThink;
     });
   }
 
-  // Sidebar order is the order the user opened sessions in this tab. Daemon
-  // map iteration must not reshuffle it, and sessions opened only in the TUI
-  // stay out of the list.
   function rememberOpened(id) {
-    if (!id) return;
-    if (!state.openedOrder.includes(id)) state.openedOrder.push(id);
+    if (!id || state.openedOrder.includes(id)) return;
+    state.openedOrder.push(id);
     saveOpened();
   }
   function forgetOpened(id) {
@@ -1797,14 +1793,17 @@ state.stream.think = liveThink;
     saveOpened();
   }
   function visibleAgents(listed) {
-    const byID = {};
-    for (const a of listed || []) if (a && a.id) byID[a.id] = a;
-    const kept = state.openedOrder.filter((id) => byID[id]);
-    if (kept.length !== state.openedOrder.length) {
-      state.openedOrder = kept;
+    const byID = new Map(listed.filter((agent) => agent.id).map((agent) => [agent.id, agent]));
+    const previous = new Set(state.openedOrder);
+    const order = state.openedOrder.filter((id) => byID.has(id));
+    for (const id of byID.keys()) {
+      if (!previous.has(id)) order.push(id);
+    }
+    if (order.length !== state.openedOrder.length || order.some((id, index) => id !== state.openedOrder[index])) {
+      state.openedOrder = order;
       saveOpened();
     }
-    return state.openedOrder.map((id) => byID[id]);
+    return order.map((id) => byID.get(id));
   }
 
   function renderSessions() {
@@ -1847,26 +1846,12 @@ state.stream.think = liveThink;
 async function refreshAgents(opts) {
     const adoptPrimary = Boolean(opts && opts.adoptPrimary);
     const data = await api("/v1/agents");
-    const listed = normalizeAgents(data && data.agents, (data && data.primaryId) || "");
-    const serverPrimary = (data && data.primaryId) || "";
-    // Keep the client's explicit binding. Never silently adopt another session
-    // just because the host fronted a newer create/stop elsewhere (including
-    // after the user closed the web binding and a TUI session became primary).
-    if (state.primaryId) {
-      if (!listed.some((a) => a.id === state.primaryId)) {
-        state.agents = visibleAgents(listed);
-        renderSessions();
-        return data;
-      }
-      rememberOpened(state.primaryId);
-      state.agents = normalizeAgents(visibleAgents(listed), state.primaryId);
-    } else if (adoptPrimary && serverPrimary) {
-      state.primaryId = serverPrimary;
-      rememberOpened(state.primaryId);
-      state.agents = normalizeAgents(visibleAgents(listed), state.primaryId);
-    } else {
-      state.agents = normalizeAgents(visibleAgents(listed), "");
+    const listed = visibleAgents(normalizeAgents(data && data.agents, ""));
+    if (adoptPrimary && !listed.some((agent) => agent.id === state.primaryId)) {
+      const primary = listed.find((agent) => agent.id === data.primaryId) || listed[0];
+      state.primaryId = primary ? primary.id : "";
     }
+    state.agents = normalizeAgents(listed, state.primaryId);
     renderSessions();
     return data;
   }
@@ -2081,15 +2066,13 @@ function startAgentsPoll() {
     try {
       const hz = await fetch(state.base + "/healthz");
       if (!hz.ok) throw new Error("healthz " + hz.status);
-setConnected(true);
+      setConnected(true);
       closeSettings();
       clearTranscript();
       loadOpened();
       // Only the initial connect may adopt a binding. Later polls/refreshes
       // never invent one after close or while another client creates.
-      await refreshAgents({ adoptPrimary: false });
-      // Do not bind every daemon session. Only a session this page already
-      // opened (or the one the user selects next) appears in the sidebar.
+      await refreshAgents({ adoptPrimary: true });
       const bound = await ensurePrimarySelected();
       if (!bound) {
         clearBoundSessionView("No running sessions on the desktop. Create one with ＋ New, or start one in the daemon and refresh.");
@@ -2125,8 +2108,6 @@ setConnected(true);
     state.base = "";
     state.session = null;
     state.agents = [];
-    // Keep openedOrder across a daemon-restart disconnect. Reconnect intersects
-    // it with the sessions the new daemon resumed; sessions never opened stay out.
     state.primaryId = "";
     state.pendingUserText = "";
     state.historyLoadedFor = null;

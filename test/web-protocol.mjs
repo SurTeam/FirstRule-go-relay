@@ -96,7 +96,7 @@ const server = createServer((req, res) => {
     const seen = new Set();
     const uniq = [];
     for (const a of list) {
-      if (seen.has(a.id)) continue;
+      if (seen.has(a.id) || posted.closes?.includes(a.id)) continue;
       seen.add(a.id);
       uniq.push(a);
     }
@@ -351,7 +351,11 @@ function buildDOM() {
       disabled: false,
       hidden: false,
       textContent: '',
-      innerHTML: '',
+      get innerHTML() { return this._html || ''; },
+      set innerHTML(value) {
+        this._html = value;
+        this.children = [];
+      },
       className: '',
       inert: false,
       onclick: null,
@@ -503,6 +507,7 @@ check('auto-select primary before session', posted.selects[0] === 'sess-1' && pr
   const main = active && active.children && active.children[0];
   const idText = main && main.children && main.children.find((c) => c.className === 'id');
   check('selected marker from primaryId', Boolean(active && idText && idText.textContent === 'sess-1'), 'active=' + (active && active.className) + ' id=' + (idText && idText.textContent));
+  check('fresh browser lists all running sessions', listedSessionIds().join(',') === 'sess-1,sess-think', listedSessionIds().join(','));
 }
 check('history restored user+assistant', /user\|You\|hello history/.test(transcriptText()) && /agent\|FirstRule\|hi from history/.test(transcriptText()), transcriptText());
 check('history restored tool card', /tool\|\|Bash/.test(transcriptText()) && transcriptText().includes('↳ 1 line returned'), transcriptText());
@@ -706,14 +711,21 @@ check('interrupt keeps primary bound', primaryId === 'sess-1', primaryId);
   check('close unloads primary', Array.isArray(posted.closes) && posted.closes.length > 0 && primaryId === '', JSON.stringify(posted.closes) + ' primary=' + primaryId);
   check('composer disabled without session', $('composer').disabled === true);
 
-  // After close, a later refresh must not invent a binding even though other
-  // sessions remain listed (mock still exposes sess-1 / creates).
+  // A later refresh must keep the composer unbound while listing other sessions.
   const selectsBeforeRefresh = posted.selects.length;
   await $('btnRefreshAgents').onclick();
   await sleep(80);
   check('refresh after close keeps unbound', primaryId === '' && posted.selects.length === selectsBeforeRefresh, 'primary=' + primaryId + ' selects=' + JSON.stringify(posted.selects));
   check('refresh after close keeps composer disabled', Boolean($('composer').disabled), 'disabled=' + $('composer').disabled);
+  check('refresh after close still lists other running sessions', listedSessionIds().includes('sess-think'), listedSessionIds().join(','));
+  check('closed session is removed from the sidebar', !listedSessionIds().includes('sess-1'), listedSessionIds().join(','));
   check('closed session prompts reopen', transcriptText().includes('Session closed') || ($('hint').textContent || '').includes('No active session'), $('hint').textContent);
+}
+
+function listedSessionIds() {
+  return $('sessions').children.map((row) =>
+    row.children[0]?.children.find((child) => child.className === 'id')?.textContent
+  ).filter(Boolean);
 }
 
 async function selectViaSessions(id) {
